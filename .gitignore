@@ -1,7 +1,7 @@
 # Secrets and local config
 .env
 .env.local
-.mcp.json
+# .mcp.json
 
 # Python
 venv/

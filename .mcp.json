@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "pixelblaze": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        ".",
+        "run",
+        "python",
+        "-m",
+        "pixelblaze_mcp.server"
+      ],
+      "env": {
+        "PIXELBLAZE_HOST": "192.168.2.97"
+      }
+    }
+  }
+}
