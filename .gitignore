@@ -3,6 +3,9 @@
 .env.local
 # .mcp.json
 
+# PixelBlaze MCP local state
+.pixelblaze_offline
+
 # Python
 venv/
 .venv/

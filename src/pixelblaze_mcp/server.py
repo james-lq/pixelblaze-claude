@@ -17,14 +17,17 @@ from .docs_tools import docs_fetch_page, docs_get_api_reference, docs_get_mapper
 from .pixelblaze_tools import (
     pixelblaze_create_pattern,
     pixelblaze_delete_pattern,
+    pixelblaze_deploy_local_pattern,
     pixelblaze_get_active_pattern,
     pixelblaze_get_controls,
     pixelblaze_get_device_info,
     pixelblaze_get_pattern_code,
+    pixelblaze_list_local_patterns,
     pixelblaze_list_patterns,
     pixelblaze_set_active_pattern,
     pixelblaze_set_brightness,
     pixelblaze_set_control,
+    pixelblaze_set_offline_mode,
     pixelblaze_update_pattern,
 )
 
@@ -53,6 +56,9 @@ mcp = FastMCP(
 
 # --- PixelBlaze device tools ---
 
+mcp.tool()(pixelblaze_set_offline_mode)
+mcp.tool()(pixelblaze_list_local_patterns)
+mcp.tool()(pixelblaze_deploy_local_pattern)
 mcp.tool()(pixelblaze_list_patterns)
 mcp.tool()(pixelblaze_get_active_pattern)
 mcp.tool()(pixelblaze_set_active_pattern)
