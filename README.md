@@ -44,9 +44,17 @@ cd pixelblaze-ai
 uv sync
 ```
 
-### 2. Create the MCP config
+### 2. Configure your PixelBlaze host
 
-Create `.mcp.json` in the project root (this file is gitignored). This tells Claude Code how to connect to your PixelBlaze:
+Create a `.env` file in the project root (this file is gitignored):
+
+```
+PIXELBLAZE_HOST=<your-pixelblaze-ip>
+```
+
+### 3. Create the MCP config
+
+Create `.mcp.json` in the project root (this file is gitignored). This tells Claude Code how to connect to the MCP server:
 
 ```json
 {
@@ -61,16 +69,13 @@ Create `.mcp.json` in the project root (this file is gitignored). This tells Cla
         "python",
         "-m",
         "pixelblaze_mcp.server"
-      ],
-      "env": {
-        "PIXELBLAZE_HOST": "192.168.2.97"
-      }
+      ]
     }
   }
 }
 ```
 
-Replace `/path/to/pixelblaze-ai` with the absolute path to this directory, and `192.168.2.97` with your PixelBlaze's IP.
+Replace `/path/to/pixelblaze-ai` with the absolute path to this directory.
 
 ### 3. Start Claude Code
 

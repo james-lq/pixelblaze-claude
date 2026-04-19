@@ -2,14 +2,17 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from project root (two levels up from this file)
-# TODO JLOM Revisit .env handling, specifically:
-# 1. Seems like `dotenv` already handles the find-in-parent logic in a more standard way?
-# 2. This implementation apparently does NOT override inherited system environment... is that what we want?
 _project_root = Path(__file__).parent.parent.parent
-load_dotenv(_project_root / ".env")
+# Searches up from this file's directory; does not override inherited env vars.
+load_dotenv()
 
-PIXELBLAZE_HOST: str = os.environ.get("PIXELBLAZE_HOST", "192.168.2.97")
+_host = os.environ.get("PIXELBLAZE_HOST")
+if not _host:
+    raise EnvironmentError(
+        "PIXELBLAZE_HOST is not set. Create a .env file in the project root:\n"
+        "  PIXELBLAZE_HOST=<your-pixelblaze-ip>"
+    )
+PIXELBLAZE_HOST: str = _host
 DOCS_DIR: Path = _project_root / "docs" / "pixelblaze"
 PATTERNS_DIR: Path = _project_root / "patterns"
 
