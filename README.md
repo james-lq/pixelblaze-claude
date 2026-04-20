@@ -2,17 +2,11 @@
 
 Create and iterate on LED patterns for a [PixelBlaze](https://www.bhencke.com/pixelblaze) controller using [Claude Code](https://docs.anthropic.com/en/docs/claude-code). An MCP server connects Claude directly to your PixelBlaze so it can create, update, and manage patterns on the device.
 
-The included patterns and design guidance (`CLAUDE.md`) are built for a **2D grid mapped as rows and columns** — specifically an edge-lit acrylic depth display where each row is a separate physical layer. The Y axis represents discrete layers (not a smooth gradient), so patterns are designed to create strong visual contrast and coordinated animation *across* layers while running smooth effects *within* each layer.
-
-This approach works well for any 2D PixelBlaze setup where one axis has significantly fewer pixels than the other (e.g. 8 rows x 32 columns), and where per-row visual differentiation matters more than smooth vertical blending.
-
-**Note:** This project assumes the PixelBlaze's [Mapper](https://electromage.com/docs/mapper) has already been configured correctly for your hardware. The mapper defines the 2D pixel map that tells PixelBlaze which physical LED corresponds to which (x, y) coordinate — patterns depend on this being set up before they can work properly.
 
 ## Adapting for your hardware
 
-The patterns auto-detect the grid dimensions at startup using `mapPixels()`, so they adapt to different sizes without code changes. To adapt the *design guidance* for a different display:
 
-1. **Edit `CLAUDE.md`** to describe your hardware — pixel layout, how light works physically, what effects look good and which don't
+1. **Edit the project folder's `CLAUDE.md`** to describe your hardware — pixel layout, how light works physically, what effects look good and which don't
 2. **Update the pixel map** on your PixelBlaze to match your physical layout
 3. **Ask Claude to help you adapt** — for example:
 
@@ -24,8 +18,7 @@ The patterns auto-detect the grid dimensions at startup using `mapPixels()`, so 
 
 - **`src/pixelblaze_mcp/`** -- MCP server that exposes PixelBlaze controls (create/update/delete patterns, set brightness, read device info, etc.)
 - **`docs/pixelblaze/`** -- Cached PixelBlaze language reference, available to Claude via the `docs_get_api_reference` tool
-- **`patterns/`** -- Pattern JS files with documentation headers, tracked in git
-- **`CLAUDE.md`** -- Project instructions that Claude reads automatically (hardware context, design principles, coding conventions, pattern templates)
+- **`CLAUDE.md`** -- Framework instructions that Claude reads automatically (pattern workflow, coding conventions)
 
 ## Setup
 
@@ -50,7 +43,10 @@ Create a `.env` file in the project root (this file is gitignored):
 
 ```
 PIXELBLAZE_HOST=<your-pixelblaze-ip>
+PROJECT_FOLDER=project-layered-acrylic
 ```
+
+Set `PROJECT_FOLDER` to whichever project folder you are currently working on. The MCP server will use its `patterns/` subfolder automatically.
 
 ### 3. Create the MCP config
 
@@ -131,14 +127,15 @@ Claude has access to these PixelBlaze tools:
 | `pixelblaze_get_device_info` | Get device status and config |
 | `docs_get_api_reference` | Get the PixelBlaze language reference |
 
-## Project structure
+## Workspace Structure
 
 ```
 pixelblaze-ai/
   .mcp.json             # MCP server config (gitignored)
-  CLAUDE.md             # Project instructions for Claude
+  .env                  # PIXELBLAZE_HOST and PATTERNS_DIR (gitignored)
+  CLAUDE.md             # Framework instructions for Claude
   pyproject.toml        # Python project config
   src/pixelblaze_mcp/   # MCP server source
   docs/pixelblaze/      # Cached API reference
-  patterns/             # Pattern JS files (deployed to device)
+  project-*/            # Per-project folders (CLAUDE.md + patterns/)
 ```

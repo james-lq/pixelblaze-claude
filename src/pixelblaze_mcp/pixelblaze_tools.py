@@ -62,7 +62,7 @@ def pixelblaze_set_offline_mode(enabled: bool) -> str:
             "PixelBlaze offline mode enabled. Device tools are disabled. "
             "You can still use docs_get_api_reference and docs_get_mapper_reference. "
             "Patterns created with pixelblaze_create_pattern will be saved locally "
-            "in patterns/ and can be deployed later with pixelblaze_deploy_local_pattern."
+            "locally and can be deployed later with pixelblaze_deploy_local_pattern."
         )
     return (
         f"PixelBlaze offline mode disabled. Device tools will connect to {PIXELBLAZE_HOST} on next use."
@@ -70,7 +70,7 @@ def pixelblaze_set_offline_mode(enabled: bool) -> str:
 
 
 def pixelblaze_list_local_patterns() -> list[dict[str, Any]]:
-    """List all PixelBlaze pattern JS files in the local patterns/ directory.
+    """List all PixelBlaze pattern JS files in the local patterns directory (PATTERNS_DIR).
 
     Returns deploy status for each file: whether it has been deployed, when it
     was last deployed, and whether the local file has been modified since the
@@ -108,8 +108,8 @@ def pixelblaze_deploy_local_pattern(file_path: str) -> dict[str, str]:
     """
     path = Path(file_path)
     if not path.is_absolute():
-        # Resolve relative paths from the project root (parent of patterns/)
-        path = PATTERNS_DIR.parent / path
+        # Resolve relative paths from the workspace root
+        path = PATTERNS_DIR.parent.parent / path
     if not path.exists():
         raise FileNotFoundError(f"Pattern file not found: {file_path}")
 
@@ -184,7 +184,7 @@ def pixelblaze_get_pattern_code(pattern_id: str) -> str:
         raise RuntimeError(
             f"{_OFFLINE_MSG}\n\n"
             f"No local file found for pattern ID '{pattern_id}'. "
-            "Check the patterns/ directory — the Pattern ID appears in the first comment "
+            "Check the local patterns directory — the Pattern ID appears in the first comment "
             "line of each JS file. You can also read the file directly."
         )
     with _pb() as pb:
@@ -196,7 +196,7 @@ def pixelblaze_get_pattern_code(pattern_id: str) -> str:
 
 def pixelblaze_create_pattern(name: str, code: str) -> dict[str, str]:
     """Create a new pattern on the PixelBlaze with the given JavaScript code,
-    then activate it. Also saves the code to a local JS file in patterns/.
+    then activate it. Also saves the code to a local JS file in the patterns directory.
 
     In offline mode, saves the pattern locally as a pending file without
     deploying to the device. Use pixelblaze_deploy_local_pattern to deploy later.
@@ -232,7 +232,7 @@ def pixelblaze_create_pattern(name: str, code: str) -> dict[str, str]:
 
 def pixelblaze_update_pattern(pattern_id: str, code: str) -> str:
     """Replace the JavaScript source code of an existing pattern.
-    Also updates the local pattern JS file in patterns/ if one exists for this ID.
+    Also updates the local pattern JS file if one exists for this ID.
 
     In offline mode, updates the local file only — the device is not contacted.
     The local file will be marked as modified-since-deployed so it shows up in
@@ -252,7 +252,7 @@ def pixelblaze_update_pattern(pattern_id: str, code: str) -> str:
                 f"{_OFFLINE_MSG}\n\n"
                 f"No local file found for pattern ID '{pattern_id}'. "
                 "Cannot update without either a device connection or a local copy. "
-                "Check patterns/ for JS files — the Pattern ID is in the first comment line."
+                "Check the local patterns directory for JS files — the Pattern ID is in the first comment line."
             )
         update_local_code(local_path, code)
         return (

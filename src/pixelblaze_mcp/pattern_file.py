@@ -134,7 +134,7 @@ def parse_pattern_file(path: Path) -> dict[str, Any]:
 
 
 def find_local_pattern_file(pattern_id: str) -> Path | None:
-    """Scan patterns/ directory for a JS file containing the given Pattern ID."""
+    """Scan the patterns directory (PATTERNS_DIR) for a JS file containing the given Pattern ID."""
     if not PATTERNS_DIR.exists():
         return None
     for path in PATTERNS_DIR.glob("*.js"):
@@ -166,5 +166,5 @@ def _next_ordinal() -> int:
 
 
 def new_pattern_file_path(name: str) -> Path:
-    """Generate the next available file path in patterns/ for the given pattern name."""
+    """Generate the next available file path in PATTERNS_DIR for the given pattern name."""
     return PATTERNS_DIR / f"{_next_ordinal():02d}-{_slugify(name)}.js"

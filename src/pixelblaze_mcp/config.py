@@ -14,7 +14,19 @@ if not _host:
     )
 PIXELBLAZE_HOST: str = _host
 DOCS_DIR: Path = _project_root / "docs" / "pixelblaze"
-PATTERNS_DIR: Path = _project_root / "patterns"
+
+# TODO Revisit mixed-metaphor usage of "project" concept vs "workspace" 
+# ...or some other way to organize the tool code vs. specific user projects.
+# Set PROJECT_FOLDER in .env to the active project's folder.
+# Relative paths are resolved from the workspace root.
+# Example: PROJECT_FOLDER=project-layered-acrylic
+_project_folder_env = os.environ.get("PROJECT_FOLDER")
+if _project_folder_env:
+    _project_folder_path = Path(_project_folder_env)
+    PROJECT_FOLDER: Path = _project_folder_path if _project_folder_path.is_absolute() else _project_root / _project_folder_path
+else:
+    PROJECT_FOLDER: Path = _project_root
+PATTERNS_DIR: Path = PROJECT_FOLDER / "patterns"
 
 # Persist PB offline mode setting as a file because there's currently no
 # proper abstraction for config token management that fits our workflow.
