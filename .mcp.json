@@ -1,4 +1,3 @@
-// Claude Code/Desktop MCP config — VSCode Copilot equivalent is in .vscode/mcp.json (uses "servers" key instead of "mcpServers")
 {
   "mcpServers": {
     "pixelblaze": {
