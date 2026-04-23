@@ -151,8 +151,14 @@ def pixelblaze_get_active_pattern() -> dict[str, str]:
         active = pb.getActivePattern()
         if active is None:
             return {"id": "", "name": "(none)"}
-        # getActivePattern returns a dict like {id: name}
-        pid, name = next(iter(active.items()))
+        # TODO JLOM REVIEW: Claude fixed this apparent incompatibility... did PB firmware change?
+        # Library may return a plain ID string or a dict like {id: name}
+        if isinstance(active, str):
+            pid = active
+            patterns = pb.getPatternList()
+            name = patterns.get(pid, "(unknown)") if isinstance(patterns, dict) else "(unknown)"
+        else:
+            pid, name = next(iter(active.items()))
         return {"id": pid, "name": name}
 
 
