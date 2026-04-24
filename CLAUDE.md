@@ -27,6 +27,23 @@ On macOS Ventura and later, each app must be explicitly granted permission to ac
 5. Test with `pixelblaze_create_pattern` — it auto-activates the new pattern
 6. Iterate with `pixelblaze_update_pattern`
 
+### Pattern File Naming Convention
+
+Pattern files live in the project's `patterns/` folder and use a 2-digit ordinal prefix, spaces, and natural capitalization — matching the Pixelblaze display name exactly (minus the `.js` extension):
+
+```
+patterns/
+  NN Name With Spaces.js          ← pattern code
+  NN Name With Spaces.mapper.js   ← pixel map for that pattern (if 2D/3D)
+```
+
+Examples:
+- `patterns/01 Spectrum Analyzer.js`
+- `patterns/02 Spectrum Analyzer 2D.js`
+- `patterns/02 Spectrum Analyzer 2D.mapper.js`
+
+The Pixelblaze display name for a pattern should be identical to its filename without the `.js` extension. This does mean that pattern names are currently limited to legal JS file names on Windows, Mac, and Linux. Filenames must be unique within a project.
+
 ### Pattern File Header
 Every pattern JS file should start with a comment block containing:
 1. **Pattern name and device pattern ID** — for updating via `pixelblaze_update_pattern`

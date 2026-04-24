@@ -9,12 +9,6 @@ Arc (rib) length: ~70'
 - Case against CAT6 cable:
   https://quinled.info/why-ethernet-cable-cat5e-cat6-etc-isnt-suitable-for-leds/
 
-## Pattern Notes
-
-1. Starter patterns
-   - AAA H24 - Cheshire Blinkfade on PB 56C
-   - sound - spectro...something -- but so far, built-in sound patterns seem generally oversensitive
-
 ## PB Docs / Reference
 
 ### Sensor board reference page:
