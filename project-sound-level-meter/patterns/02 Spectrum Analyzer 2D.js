@@ -1,4 +1,4 @@
-// 02 Spectrum Analyzer 2D — Pattern ID: (pending)
+// 02 Spectrum Analyzer 2D — Pattern ID: uYWinxJxJrJZyCeAa
 //
 // VU-style spectrum analyzer on an 2D LED grid (see `*.mapper.js` file).
 // Visual frequency bin bars fill upward from the bottom.
@@ -39,7 +39,7 @@ for (_i = 0; _i < NUM_BINS; _i++) {
 }
 
 // ---- Per-bin state ----
-var binLevels  = array(8)   // smoothed display level per bin (0–1)
+export var binLevels  = array(8)   // smoothed display level per bin (0–1)
 var peakLevels = array(8)   // peak-hold level per bin (0–1)
 for (_i = 0; _i < NUM_BINS; _i++) {
   binLevels[_i]  = 0
@@ -50,7 +50,7 @@ for (_i = 0; _i < NUM_BINS; _i++) {
 // Computes sensitivity that keeps the tallest bar near targetMax.
 // Ported from "sound - spectrum analyser 1D/2D" by ChrisNZ (KFLiP26).
 var targetMax  = 0.9
-var averageMax = 0
+export var averageMax = 0
 var pic = array(5)
 pic[0] = 0.25    // kp — proportional gain
 pic[1] = 1.8     // ki — integral gain
@@ -137,10 +137,10 @@ export function render2D(index, x, y) {
   }
 }
 
-// 1D fallback when no pixel map is configured
-export function render(index) {
-  rgb(0, 0, 0)
-}
+// 1D fallback — commented out to force render2D to be the only renderer
+// export function render(index) {
+//   rgb(0, 0, 0)
+// }
 
 // How responsive bars are to sound changes (low = instant, high = slow/smooth)
 export function sliderSmoothing(v) { smoothing = mix(0.0, 0.95, v) }
@@ -150,3 +150,8 @@ export function sliderPeakDecay(v) { peakDecayRate = mix(0.02, 0.5, v) }
 export function sliderBrightness(v) { brightness = mix(0.2, 1.0, v) }
 // Minimum signal level treated as silence (tune to eliminate ambient noise)
 export function sliderNoiseFloor(v) { noiseFloor = mix(0, 0.2, v) }
+
+// ---- pixelblaze-mcp metadata----
+// @deployed: 2026-04-25T01:02:05Z
+// @deployed-hash: c1264ebf
+// @modified-since-deployed: false

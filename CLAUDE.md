@@ -71,6 +71,10 @@ The MCP tooling appends a metadata block to the **end** of every pattern file af
 
 When `modified-since-deployed` is `true`, use `pixelblaze_update_pattern` to push the changes to the device.
 
+### 2D Patterns: Never Export Both `render` and `render2D`
+
+If a pattern exports both `render(index)` and `render2D(index, x, y)`, PixelBlaze will use the 1D renderer **even when a pixel map is configured**. For 2D mapped patterns, only define `render2D` — omit or comment out `render` entirely.
+
 ### Slider Comments
 Every slider function should have a comment on the line above describing what the control does in plain language, as if explaining to a user. Maximum 1 sentence.
 
