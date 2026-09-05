@@ -1,7 +1,8 @@
-# PixelBlaze AI
+# PixelBlaze Claude (LQ Fork)
+
+> Forked from `tomnz`'s repo, as described on [PB forums here](https://forum.electromage.com/t/batteries-included-claude-code-template-project/4667)
 
 Create and iterate on LED patterns for a [PixelBlaze](https://www.bhencke.com/pixelblaze) controller using [Claude Code](https://docs.anthropic.com/en/docs/claude-code). An MCP server connects Claude directly to your PixelBlaze so it can create, update, and manage patterns on the device.
-
 
 ## Adapting for your hardware
 

@@ -22,10 +22,9 @@ function (pixelCount) {
     localIdx = i % 50
 
     // Pixels 48–49 of each string are unused (beyond the 4×12 active grid).
-    // Place them at the last-used position so they don't expand the bounding box.
+    // Park them off-grid so they don't affect the coordinate space.
     if (localIdx >= 48) {
-      col = string * 4 + 3   // last column of this string
-      map.push([col * 7, 77])
+      map.push([-1, -1])
       continue
     }
 

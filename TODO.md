@@ -21,3 +21,8 @@
 - [ ] In `pixelblaze_tools.py`, unwrap the `{"main": ...}` envelope in `get_pattern_code` before returning — return the raw JS string.
 - [ ] Add a bulk download tool (e.g. `pixelblaze_download_patterns`) that accepts a list of IDs or a name filter regex and downloads all matches in one call, saving them to the local patterns directory.
 - [ ] Consider whether `getPatternSourceCode` vs `getPatternAsEpe` is the right underlying API call to use.
+
+### Misc
+
+- Evaluate `PBZ` tooling for ideas/alternative strategies:
+  https://forum.electromage.com/t/pbz-an-unofficial-cli-js-library-for-pixelblaze-headless-pattern-compiling/4742

@@ -36,10 +36,11 @@ zigzag = true  // Many 2D LED matrices are wired in a zig-zag pattern
 
 // These variables control the character of the visualization itself
 averageWindowMs = 500  // Compare spectrum energy to it's avg over this period
-fade = .6  // What percentage of the pixel's brightness is retained each frame
+fade = .7  // What percentage of the pixel's brightness is retained each frame
 speed = 1  // Speed of viewport travel through the spectrum field
 zoom = .3  // .01 => zoomed way in; 10 => zoomed far out
-targetFill = 0.15  // Seek a sensitivity that makes this the average light fill
+targetFill = 0.35  // Seek a sensitivity that makes this the average light fill
+smoothing = 0.5  // Blending weight for temporal smoothing of frequency vals
 
 var pic = makePIController(1, .1, 300, 0, 300)
 var sensitivity = 0
@@ -59,6 +60,9 @@ function makePIController(kp, ki, start, min, max) {
   pic[4] = max
   return pic
 }
+
+// How much temporal smoothing to apply to frequency data (more = less blinky but slower to react)
+export function sliderSmoothing(v) { smoothing = v }
 
 function calcPIController(pic, err) {
   pic[2] = clamp(pic[2] + err, pic[3], pic[4])
@@ -81,11 +85,10 @@ export function beforeRender(delta) {
     averages[i] = max(.00001, 
       averages[i] * (1 - dw) + frequencyData[i] * dw * sensitivity)
 
-    // Notice that we do not implement arrayLerp() as in "sound - spectro 
-    // kalidastrip", and as a result this pattern trades some smoothing for
-    // faster frame rates.
-    vals[i] = (frequencyData[i] * sensitivity - 2 * averages[i]) * 10 * 
+    // Temporal smoothing on vals reduces frame-to-frame spikes (blinkiness)
+    var newVal = (frequencyData[i] * sensitivity - 2 * averages[i]) * 10 * 
                 (1 + averages[i] * 1000)
+    vals[i] = vals[i] * smoothing + newVal * (1 - smoothing)
   }
 
 }
@@ -124,7 +127,7 @@ export function render2D(index, x, y) {
   This pixel mapper shim provides support for 1D strips and unmapped 2D matrices
   by calculating x & y assuming a 2D LED matrix display, given a matrix width
   and height.
-*/
+
 export function render(index) {
   var y = floor(index / width)
   var x = index % width
@@ -134,6 +137,7 @@ export function render(index) {
   y /= height
   render2D(index, x, y)
 }
+*/
 
 // doAt calls a function `fn` at a specified frequency, given ms elapsed `delta`
 // For example, simulate sensor board data updates at 40Hz.

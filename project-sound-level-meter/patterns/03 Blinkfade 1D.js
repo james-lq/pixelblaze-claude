@@ -315,3 +315,8 @@ function binomSample(mean, concentration) {
   for (i = 0; i < concentration; i++) sum += random(1);
   return mean * (0.5 + sum / concentration);
 }
+
+// ---- pixelblaze-mcp metadata----
+// @deployed: 2026-04-25T01:03:57Z
+// @deployed-hash: e4bee947
+// @modified-since-deployed: false
