@@ -49,6 +49,8 @@ PROJECT_FOLDER=project-layered-acrylic
 
 Set `PROJECT_FOLDER` to whichever project folder you are currently working on. The MCP server will use its `patterns/` subfolder automatically.
 
+Optional: `PIXELBLAZE_PREVIEW_CAPTURE=0` skips the ~6 s live thumbnail capture on each save and stores a placeholder thumbnail instead.
+
 ### 3. Create the MCP config
 
 Create `.mcp.json` in the project root (this file is gitignored). This tells Claude Code how to connect to the MCP server:

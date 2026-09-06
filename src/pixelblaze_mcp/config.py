@@ -28,6 +28,12 @@ else:
     PROJECT_FOLDER: Path = _project_root
 PATTERNS_DIR: Path = PROJECT_FOLDER / "patterns"
 
+# Set PIXELBLAZE_PREVIEW_CAPTURE=0 to skip the ~6 s live thumbnail capture on
+# every save and use a static placeholder thumbnail instead.
+def preview_capture_enabled() -> bool:
+    return os.environ.get("PIXELBLAZE_PREVIEW_CAPTURE", "1").lower() not in ("0", "false", "no")
+
+
 # Persist PB offline mode setting as a file because there's currently no
 # proper abstraction for config token management that fits our workflow.
 # e.g. storing directly in `.mcp.json` apparently has issues related to MCP server restarts, etc.

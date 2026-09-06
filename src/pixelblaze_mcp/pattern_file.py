@@ -52,7 +52,6 @@ def stamp_file(path: Path, code: str, pattern_id: str, deployed_at: str | None) 
     when a real pattern_id is provided.
     """
     ts = deployed_at or "(pending)"
-    h = code_hash(code)
     body = strip_mcp_block(code)
 
     # Replace (pending) placeholder in the first comment line with the real ID
@@ -63,6 +62,10 @@ def stamp_file(path: Path, code: str, pattern_id: str, deployed_at: str | None) 
             body,
             count=1,
         )
+
+    # Hash the body as it will be written (after the ID substitution), so a
+    # freshly stamped file does not immediately read as modified.
+    h = code_hash(body)
 
     mcp_block = (
         f"\n\n{_MCP_SENTINEL}\n"
@@ -146,25 +149,48 @@ def find_local_pattern_file(pattern_id: str) -> Path | None:
     return None
 
 
-def _slugify(name: str) -> str:
-    slug = name.lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug)
-    return slug.strip("-")
+# Characters that are illegal in filenames on Windows (superset of macOS/Linux).
+_ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_ORDINAL_PREFIX_RE = re.compile(r"^(\d+)[- ]")
+
+
+def _safe_filename(name: str) -> str:
+    return _ILLEGAL_FILENAME_CHARS.sub("-", name).strip().rstrip(".")
 
 
 def _next_ordinal() -> int:
+    """Next 2-digit ordinal, counting both `NN Name.js` and legacy `NN-name.js` files."""
     if not PATTERNS_DIR.exists():
         return 1
     max_ord = 0
     for f in PATTERNS_DIR.glob("*.js"):
-        m = re.match(r"^(\d+)-", f.name)
+        m = _ORDINAL_PREFIX_RE.match(f.name)
         if m:
             max_ord = max(max_ord, int(m.group(1)))
     return max_ord + 1
 
 
+def canonical_pattern_name(name: str) -> str:
+    """Display name following the `NN Name With Spaces` convention: filename-safe,
+    prefixed with the next ordinal unless the name already starts with one.
+    The device display name and the local filename stem are always identical."""
+    base = _safe_filename(name)
+    if not _ORDINAL_PREFIX_RE.match(base):
+        base = f"{_next_ordinal():02d} {base}"
+    return base
+
+
 def new_pattern_file_path(name: str) -> Path:
-    """Generate the next available file path in PATTERNS_DIR for the given pattern name."""
-    return PATTERNS_DIR / f"{_next_ordinal():02d}-{_slugify(name)}.js"
+    """File path in PATTERNS_DIR for a pattern: `<canonical name>.js`."""
+    return PATTERNS_DIR / f"{canonical_pattern_name(name)}.js"
+
+
+def ensure_header(code: str, name: str, pattern_id: str = "(pending)") -> str:
+    """Prepend the `// <Name> — Pattern ID: <id>` header line if the code lacks one.
+
+    The tooling locates a pattern's local file by this line, so code saved
+    without it cannot be matched on later updates.
+    """
+    if _PATTERN_ID_RE.search(code):
+        return code
+    return f"// {name} — Pattern ID: {pattern_id}\n{code.lstrip()}"

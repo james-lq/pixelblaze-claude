@@ -24,6 +24,7 @@ from .pixelblaze_tools import (
     pixelblaze_get_pattern_code,
     pixelblaze_list_local_patterns,
     pixelblaze_list_patterns,
+    pixelblaze_regenerate_preview,
     pixelblaze_set_active_pattern,
     pixelblaze_set_brightness,
     pixelblaze_set_control,
@@ -70,6 +71,7 @@ mcp.tool()(pixelblaze_get_controls)
 mcp.tool()(pixelblaze_set_control)
 mcp.tool()(pixelblaze_get_device_info)
 mcp.tool()(pixelblaze_set_brightness)
+mcp.tool()(pixelblaze_regenerate_preview)
 
 # --- Documentation tools ---
 

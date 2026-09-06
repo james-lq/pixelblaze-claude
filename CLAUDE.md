@@ -27,6 +27,14 @@ On macOS Ventura and later, each app must be explicitly granted permission to ac
 5. Test with `pixelblaze_create_pattern` — it auto-activates the new pattern
 6. Iterate with `pixelblaze_update_pattern`
 
+### Pattern Thumbnails (Preview Images)
+
+Every save (`create`, `update`, `deploy_local`) captures a live thumbnail from the running pattern the same way the web UI does: ~150 preview frames streamed from the device, gamma-corrected, resampled to 100 columns, and JPEG-encoded under ~5 KB. This adds roughly 6–8 seconds per save. If the pattern being saved is not the active one, it is activated for the capture and the previous pattern is restored afterwards.
+
+- Set `PIXELBLAZE_PREVIEW_CAPTURE=0` in `.env` to skip capture and store a neutral placeholder thumbnail instead (fast edit loops).
+- Use `pixelblaze_regenerate_preview(pattern_id)` to backfill a thumbnail for a pattern already on the device.
+- Patterns saved with **no** thumbnail make the web UI's pattern list stall and show the "Pixelblaze is having trouble loading preview images" dialog; the placeholder exists so that can't happen.
+
 ### Pattern File Naming Convention
 
 Pattern files live in the project's `patterns/` folder and use a 2-digit ordinal prefix, spaces, and natural capitalization — matching the Pixelblaze display name exactly (minus the `.js` extension):
@@ -42,13 +50,20 @@ Examples:
 - `patterns/02 Spectrum Analyzer 2D.js`
 - `patterns/02 Spectrum Analyzer 2D.mapper.js`
 
-The Pixelblaze display name for a pattern should be identical to its filename without the `.js` extension. This does mean that pattern names are currently limited to legal JS file names on Windows, Mac, and Linux. Filenames must be unique within a project.
+The Pixelblaze display name for a pattern is identical to its filename without the `.js` extension. `pixelblaze_create_pattern` enforces this: if the name you pass lacks a leading ordinal, the next free one is prepended to both the display name and the filename. This does mean that pattern names are currently limited to legal JS file names on Windows, Mac, and Linux. Filenames must be unique within a project.
 
 ### Pattern File Header
-Every pattern JS file should start with a comment block containing:
-1. **Pattern name and device pattern ID** — for updating via `pixelblaze_update_pattern`
-2. **Effect description** — what the pattern looks like, in plain language
-3. **Design notes** — key implementation decisions, algorithms used, and gotchas
+Every pattern JS file must start with this exact single-line comment (em dash included), which is how the tooling matches a local file to its device pattern:
+
+```js
+// NN Name With Spaces — Pattern ID: abc123XYZ
+```
+
+Use `(pending)` as the ID for a file that has not been deployed yet; the tooling fills in the real ID on first deploy. `pixelblaze_create_pattern` prepends this line automatically if the code lacks it. Without it, `pixelblaze_update_pattern` cannot find the local file and writes a duplicate.
+
+Follow the header line with a comment block containing:
+1. **Effect description** — what the pattern looks like, in plain language
+2. **Design notes** — key implementation decisions, algorithms used, and gotchas
 
 
 ### Auto-Generated Metadata Block
@@ -90,3 +105,6 @@ export function sliderWidth(v) { xSize = mix(0.08, 0.5, v) }
 export function sliderBalls(v) { numBalls = floor(mix(1, 5.99, v)) }
 ```
 
+## TODO.md Convention
+
+`TODO.md` is a list of open items only. When an item is completed, delete it; do not tick it off, annotate it as done, or keep a log of finished work (git history serves that purpose). Items are plain bullets, not checkboxes.
