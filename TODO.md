@@ -1,5 +1,23 @@
 # TODO
 
+## Workflow
+
+- Revisit root .env file changes requiring an MCP restart, particularly device address.
+
+- Configure device per project
+
+- Stretch: Define named devices and make deploying projects to different devices easier.
+
+- Make sure API docs load the latest docs? Do I need to re-evaluate local caching?
+
+## Pattern Naming and Metadata
+
+- Allow projects to define a pattern name prefix, e.g. `H26 - `
+
+- Move the auto-generated metadata block to a sidecar file (see `CLAUDE.md` TODO) rather than patching the in-file parser further. Needs a migration for already-stamped files in the existing projects; do as its own commit.
+
+- Investigate a better way to set **default control values on initial deployment**. A pattern deployed to a device for the first time has no saved control values, so `pixelblaze_get_controls` reads back uninitialised garbage (e.g. `1e34`, `3.7e-40`) and the UI shows nonsense until the values are set by hand. The observed behavior of actual rendering seems inconsistent under this scenario -- it seems like var settings in sources are respected... at least partially. Needs verification.
+
 ## Re-evaluate MCP pattern download (`pixelblaze_get_pattern_code`)
 
 **Context:** During a session to back up all `AAA`/`QN`-prefixed patterns, the MCP tool approach was slow enough that it had to be abandoned in favour of a direct Python script using `pixelblaze-client`.
@@ -17,7 +35,3 @@
 
 - Evaluate `PBZ` tooling for ideas/alternative strategies:
   https://forum.electromage.com/t/pbz-an-unofficial-cli-js-library-for-pixelblaze-headless-pattern-compiling/4742
-
-## Pattern file metadata
-
-- Move the auto-generated metadata block to a sidecar file (see `CLAUDE.md` TODO) rather than patching the in-file parser further. Needs a migration for already-stamped files in the existing projects; do as its own commit.
