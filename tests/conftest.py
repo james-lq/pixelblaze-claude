@@ -20,10 +20,6 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     monkeypatch.setattr(config, "DEVICES_FILE", tmp_path / "devices.toml")
     monkeypatch.setattr(config, "PROJECTS_DIR", projects)
-    # pattern_file imported PROJECTS_DIR by value, so it needs pointing too.
-    from pixelblaze_mcp import pattern_file
-
-    monkeypatch.setattr(pattern_file, "PROJECTS_DIR", projects)
     return tmp_path
 
 

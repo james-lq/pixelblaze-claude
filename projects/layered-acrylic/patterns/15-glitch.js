@@ -1,4 +1,4 @@
-// Glitch — Pattern ID: n3vsMNMDxjfF6gDWv
+// Glitch
 //
 // Digital glitch aesthetic combining per-layer effects and
 // global events for an unpredictable, chaotic display.

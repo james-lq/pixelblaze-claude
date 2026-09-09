@@ -1,4 +1,4 @@
-// Color Strobe — Pattern ID: qSQsBYADnoHFceARu
+// Color Strobe
 //
 // Maximum framerate chaos. Rapid color cycling with hard
 // on/off strobing. Each layer gets a different rainbow slice

@@ -1,0 +1,11 @@
+# Written by the pixelblaze-mcp tooling on every deploy. Most recent device first.
+# Renaming the pattern means renaming this file with it.
+
+[[deployment_history]]
+device_id = "0x00AC056C"
+device_name = "PB LQ 56C SENSOR" # display name at deploy time; a hint, not used for matching
+pattern_id = "mSXJ5etzaarWuZSPv"
+deployed_at = 2026-09-08T02:59:12Z
+deployed_hash = "1e7d7a1f"
+
+[deployment_history.controls]

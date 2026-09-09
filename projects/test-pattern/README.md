@@ -1,4 +1,4 @@
-# project-test-pattern
+# test-pattern
 
 Basic functionality testing against the current Pixelblaze device. See `CLAUDE.md` for the working summary.
 

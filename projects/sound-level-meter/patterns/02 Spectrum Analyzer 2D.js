@@ -1,4 +1,4 @@
-// 02 Spectrum Analyzer 2D — Pattern ID: uYWinxJxJrJZyCeAa
+// 02 Spectrum Analyzer 2D
 //
 // VU-style spectrum analyzer on an 2D LED grid (see `*.mapper.js` file).
 // Visual frequency bin bars fill upward from the bottom.
@@ -150,8 +150,3 @@ export function sliderPeakDecay(v) { peakDecayRate = mix(0.02, 0.5, v) }
 export function sliderBrightness(v) { brightness = mix(0.2, 1.0, v) }
 // Minimum signal level treated as silence (tune to eliminate ambient noise)
 export function sliderNoiseFloor(v) { noiseFloor = mix(0, 0.2, v) }
-
-// ---- pixelblaze-mcp metadata----
-// @deployed: 2026-04-25T01:02:05Z
-// @deployed-hash: c1264ebf
-// @modified-since-deployed: false

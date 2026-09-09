@@ -1,4 +1,4 @@
-// Breathing Cascade — Pattern ID: Yg8Gg5n55jth3FcDN
+// Breathing Cascade
 //
 // All layers pulse brightness like breathing, with a rolling
 // time delay front-to-back. Shimmer along X adds texture

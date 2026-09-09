@@ -1,4 +1,4 @@
-// Pendulum Wave — Pattern ID: Yh8oLYiAS89CwgEXP
+// Pendulum Wave
 //
 // Each layer has a bright point swinging at a slightly different
 // frequency, creating classic pendulum wave phase patterns

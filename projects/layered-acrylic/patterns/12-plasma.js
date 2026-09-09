@@ -1,4 +1,4 @@
-// Plasma — Pattern ID: 3asuCmP5ExnG943EC
+// Plasma
 //
 // Classic sine-interference plasma. Three overlapping wave
 // fields with large per-layer phase offsets create swirling

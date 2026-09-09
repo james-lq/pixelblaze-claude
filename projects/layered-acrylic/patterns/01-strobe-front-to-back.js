@@ -1,4 +1,4 @@
-// Strobe Front-to-Back — Pattern ID: bKWeMM74DarQrsNeR
+// Strobe Front-to-Back
 //
 // Layers light up sequentially front-to-back with a fading
 // trail. Hue cycles over time and shifts per layer for a

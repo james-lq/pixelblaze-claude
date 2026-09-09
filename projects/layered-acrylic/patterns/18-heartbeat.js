@@ -1,4 +1,4 @@
-// Heartbeat — Pattern ID: 2Lq8bppccw3s9nCi3
+// Heartbeat
 //
 // Sharp double-pulse EKG waveform radiates from center outward.
 // Layers staggered for a cascading heartbeat through depth.

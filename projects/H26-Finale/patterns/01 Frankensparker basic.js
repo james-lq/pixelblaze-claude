@@ -1,4 +1,4 @@
-// 01 Frankensparker basic — Pattern ID: dBdPAvWPDRSnqi3c8
+// 01 Frankensparker basic
 /*
   Effect: a single bright white spark runs the length of the strip in
   250 ms, then the strip goes dark until the next spark 5 seconds later.
@@ -57,8 +57,3 @@ export function render(index) {
   }
   hsv(0, 0, v)
 }
-
-// ---- pixelblaze-mcp metadata----
-// @deployed: 2026-09-06T03:05:51Z
-// @deployed-hash: a2b066c7
-// @modified-since-deployed: false

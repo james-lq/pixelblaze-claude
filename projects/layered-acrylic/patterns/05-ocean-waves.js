@@ -1,4 +1,4 @@
-// Ocean Waves — Pattern ID: kj5t4NmPxRLQHPQQb
+// Ocean Waves
 //
 // A wave crest travels along the X axis of each layer with
 // per-layer phase offsets creating rolling depth planes of

@@ -110,3 +110,18 @@ def test_the_local_filename_never_carries_the_prefix(project):
     assert path.name == "08 Spark Chorus.js"
     assert proj.pattern_name_prefix not in path.name
     assert path.parent == proj.patterns_dir
+
+
+@pytest.mark.parametrize("written", ['"H26 "', '" H26"', '"  H26  "'])
+def test_a_prefix_written_with_its_own_separator_does_not_double_the_space(project, written):
+    """The join already adds one space, so `pattern_name_prefix = "H26 "` would
+    otherwise produce `H26  08 Spark Chorus`."""
+    proj = project(f"pattern_name_prefix = {written}\n")
+    assert proj.pattern_name_prefix == "H26"
+    assert device_pattern_name("08 Spark Chorus", proj) == "H26 08 Spark Chorus"
+
+
+def test_a_whitespace_only_prefix_means_no_prefix(project):
+    proj = project('pattern_name_prefix = "   "\n')
+    assert proj.pattern_name_prefix == ""
+    assert device_pattern_name("08 Spark Chorus", proj) == "08 Spark Chorus"

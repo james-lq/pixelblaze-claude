@@ -1,4 +1,4 @@
-# project-h26-frankensparker
+# H26-Finale
 
 Halloween 2026 spark/arc patterns for a single Pixelblaze LED strip. See `CLAUDE.md` for working context.
 

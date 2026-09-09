@@ -1,4 +1,4 @@
-// Spectrum Rotate — Pattern ID: 4RrF8eRB6yJEJXSMt
+// Spectrum Rotate
 //
 // Each layer gets a hue band from the spectrum. A brightness
 // wave runs along each layer's 24 LEDs. The spectrum slowly

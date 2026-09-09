@@ -1,4 +1,4 @@
-// Aurora Australis — Pattern ID: rb4BpMd2d5XDr9t3r
+// Aurora Australis
 //
 // Organic aurora using 2D Perlin noise for brightness instead
 // of regular wave() functions. Noise is stretched along X

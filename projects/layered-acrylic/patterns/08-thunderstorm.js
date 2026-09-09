@@ -1,4 +1,4 @@
-// Thunderstorm — Pattern ID: Sd7HuJqjbGhSvETsG
+// Thunderstorm
 //
 // Random layers flash white (lightning). Between strikes,
 // a dim blue pulse rolls front-to-back like a thunder rumble.

@@ -1,4 +1,4 @@
-// 01 TEST RGB 1D Chaser Cycle — Pattern ID: xJGG8BAk8NAFQJYpS
+// 01 RGB 1D Chaser Cycle
 /*
   Effect: a single bright dot with a short fading tail travels from pixel 0
   to the end of the strip and back again. Each time it completes a full
@@ -56,8 +56,3 @@ export function render(index) {
   v = v * v * v
   hsv(hue, 1, v)
 }
-
-// ---- pixelblaze-mcp metadata----
-// @deployed: 2026-09-06T02:25:16Z
-// @deployed-hash: cf211d0c
-// @modified-since-deployed: false

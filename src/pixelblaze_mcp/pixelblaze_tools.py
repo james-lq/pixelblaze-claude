@@ -5,9 +5,10 @@ a device's display name, or a bare IP address for a one-off. Tools that work on
 local files take a `project` (a folder name under `projects/`) or a `file_path`,
 which implies its project.
 
-Phase 1 of plan 01: `device` has no fallback yet, because the pattern sidecar
-that records where a pattern last went arrives in phase 2. Until then, omitting
-it is an error that lists the registered devices.
+When `device` is omitted, it is resolved from the pattern's `.sidecar.toml`:
+the device it last went to, else the project's most recently used one. So a
+redeploy needs no argument, and naming a device explicitly is how a pattern
+moves to a new one.
 """
 
 import json
@@ -30,6 +31,7 @@ from .config import (
 from .device import OFFLINE_MSG, connect, connect_resolved, describe, read_config
 from .preview import capture_preview as capture_preview_image
 from .preview import placeholder_preview
+from . import sidecar as sidecar_mod
 from .pattern_file import (
     canonical_pattern_name,
     device_pattern_name,
@@ -37,15 +39,44 @@ from .pattern_file import (
     find_local_pattern_file,
     new_pattern_file_path,
     parse_pattern_file,
-    stamp_file,
-    update_local_code,
+    write_pattern_file,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _now_utc() -> datetime:
+    """Deploy timestamps are whole seconds, UTC — TOML stores them natively."""
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _read_controls(pb) -> dict[str, Any]:
+    """The live control values for the running pattern, for the sidecar record.
+
+    Read back rather than pushed, so tuning done in the web UI since the last
+    deploy is captured instead of clobbered.
+    """
+    try:
+        return dict(pb.getActiveControls() or {})
+    except Exception as e:  # a missing control map must never fail a deploy
+        logger.warning("Could not read control values back: %s", e)
+        return {}
+
+
+def _record_deploy(
+    path: Path, code: str, pattern_id: str, device, controls: dict[str, Any] | None = None
+) -> None:
+    """Write the pattern file and its sidecar entry for a completed deploy."""
+    sc = sidecar_mod.load(path)
+    sc.record(
+        device_id=device.chip_id,
+        device_name=device.name,
+        pattern_id=pattern_id,
+        deployed_hash=sidecar_mod.content_hash(code),
+        deployed_at=_now_utc(),
+        controls=controls,
+    )
+    sc.save()
 
 
 def _wants_preview(project: Project | None, override: bool | None) -> bool:
@@ -96,8 +127,6 @@ def _save_pattern(
     is_new = pattern_id is None
     if is_new:
         pattern_id = pb.makeId()
-    # Give the device the real ID in the header, not the local "(pending)" placeholder.
-    code = code.replace("Pattern ID: (pending)", f"Pattern ID: {pattern_id}", 1)
     pb.savePattern(
         previewImage=placeholder_preview(), sourceCode=code, name=name, id=pattern_id, allowCache=True
     )
@@ -289,16 +318,23 @@ def pixelblaze_list_local_patterns(project: str | None = None) -> dict[str, Any]
         rows: list[dict[str, Any]] = []
         if proj.patterns_dir.exists():
             for path in sorted(proj.patterns_dir.glob("*.js")):
+                # A `<stem>.mapper.js` is that pattern's pixel map, not a pattern.
+                if path.name.endswith(".mapper.js"):
+                    continue
                 try:
                     info = parse_pattern_file(path)
-                    rows.append({
+                    row = {
                         "file": path.name,
                         "name": info["name"],
                         "device_name": device_pattern_name(path.stem, proj),
                         "pattern_id": info["pattern_id"] or "(none)",
+                        "deployed_to": info["device_name"] or info["device_id"] or "(never)",
                         "deployed_at": info["deployed_at"] or "(never)",
                         "modified_since_deployed": info["modified_since_deployed"],
-                    })
+                    }
+                    if info["legacy_metadata"]:
+                        row["needs_migration"] = True
+                    rows.append(row)
                 except Exception as e:
                     rows.append({"file": path.name, "error": str(e)})
         grouped[name] = rows
@@ -306,7 +342,7 @@ def pixelblaze_list_local_patterns(project: str | None = None) -> dict[str, Any]
 
 
 def pixelblaze_deploy_local_pattern(
-    file_path: str, device: str, capture_preview: bool | None = None
+    file_path: str, device: str | None = None, capture_preview: bool | None = None
 ) -> dict[str, str]:
     """Deploy a locally saved pattern JS file to a PixelBlaze device.
 
@@ -318,7 +354,9 @@ def pixelblaze_deploy_local_pattern(
         file_path: Path to the pattern JS file (absolute, or relative to the
             workspace root — the folder holding devices.toml).
         device: Which PixelBlaze to deploy to: a chip ID, a registered display
-            name, or an IP address.
+            name, or an IP address. Omit to redeploy to wherever this pattern
+            last went, per its sidecar. Naming a device it has not been on
+            creates it there afresh.
         capture_preview: Override the project's `preview_capture` setting for
             this call. False skips the ~6 s live thumbnail capture.
     """
@@ -334,18 +372,32 @@ def pixelblaze_deploy_local_pattern(
     # file locally propagates to the device on redeploy.
     name = device_pattern_name(path.stem, project)
 
-    with connect(device, project=project) as pb:
+    resolved = resolve_device(device, project=project, pattern_path=path)
+    # An explicit device with no history always creates a new pattern there; it
+    # never updates one under an ID minted on a different controller.
+    entry = info["sidecar"].entry_for(resolved.chip_id) if resolved.chip_id else None
+    existing_id = entry.pattern_id if entry else None
+
+    with connect_resolved(resolved) as pb:
         pattern_id = _save_pattern(
             pb,
             code=code,
             name=name,
-            pattern_id=existing_id if existing_id and existing_id != "(pending)" else None,
-            activate=not existing_id or existing_id == "(pending)",
+            pattern_id=existing_id,
+            activate=existing_id is None,
             capture=_wants_preview(project, capture_preview),
         )
+        controls = _read_controls(pb)
 
-    stamp_file(path, code, pattern_id, _now_utc())
-    return {"id": pattern_id, "name": name, "file": path.name, "project": project.name}
+    write_pattern_file(path, code, path.stem)
+    _record_deploy(path, code, pattern_id, resolved, controls)
+    return {
+        "id": pattern_id,
+        "name": name,
+        "file": path.name,
+        "project": project.name,
+        "device": resolved.label,
+    }
 
 
 # --- Device patterns ------------------------------------------------------
@@ -447,7 +499,8 @@ def pixelblaze_create_pattern(
             added to the device's display name but never to the local filename.
         code: PixelBlaze JavaScript source code (must define a render(index) function).
         project: The project folder name under `projects/` this pattern belongs to.
-        device: Which PixelBlaze to deploy to. Required unless offline.
+        device: Which PixelBlaze to deploy to. Omit to use the project's most
+            recently deployed device.
         capture_preview: Override the project's `preview_capture` setting for
             this call. False skips the ~6 s live thumbnail capture.
 
@@ -461,9 +514,9 @@ def pixelblaze_create_pattern(
 
     if is_offline():
         path = new_pattern_file_path(stem, proj)
-        stamp_file(path, code, "(pending)", None)
+        write_pattern_file(path, code, stem)
         return {
-            "id": "(pending)",
+            "id": "(not deployed)",
             "name": stem,
             "device_name": display_name,
             "project": proj.name,
@@ -476,7 +529,8 @@ def pixelblaze_create_pattern(
             ),
         }
 
-    with connect(device, project=proj) as pb:
+    resolved = resolve_device(device, project=proj)
+    with connect_resolved(resolved) as pb:
         pattern_id = _save_pattern(
             pb,
             code=code,
@@ -484,15 +538,18 @@ def pixelblaze_create_pattern(
             activate=True,
             capture=_wants_preview(proj, capture_preview),
         )
+        controls = _read_controls(pb)
 
-    path = find_local_pattern_file(pattern_id) or new_pattern_file_path(stem, proj)
-    stamp_file(path, code, pattern_id, _now_utc())
+    path = new_pattern_file_path(stem, proj)
+    write_pattern_file(path, code, stem)
+    _record_deploy(path, code, pattern_id, resolved, controls)
     return {
         "id": pattern_id,
         "name": stem,
         "device_name": display_name,
         "project": proj.name,
         "file": path.name,
+        "device": resolved.label,
     }
 
 
@@ -509,7 +566,8 @@ def pixelblaze_update_pattern(
     Args:
         pattern_id: The ID of the pattern to update.
         code: New PixelBlaze JavaScript source code.
-        device: Which PixelBlaze holds this pattern. Required unless offline.
+        device: Which PixelBlaze holds this pattern. Omit to use the device
+            its sidecar last recorded.
         capture_preview: Override the project's `preview_capture` setting for
             this call. False skips the ~6 s live thumbnail capture.
 
@@ -527,20 +585,18 @@ def pixelblaze_update_pattern(
                 "Check the projects' patterns folders — the Pattern ID is in the first "
                 "comment line of each JS file."
             )
-        update_local_code(local_path, ensure_header(code, local_path.stem, pattern_id))
+        write_pattern_file(local_path, code, local_path.stem)
         return (
             f"Offline mode: updated local file {local_path.name} with new code. "
             "The device has not been updated. "
             f"Call pixelblaze_deploy_local_pattern('{local_path}', device=...) to deploy."
         )
 
-    with connect(device, project=project) as pb:
+    resolved = resolve_device(device, project=project, pattern_path=local_path)
+    with connect_resolved(resolved) as pb:
         patterns = pb.getPatternList()
         name = patterns.get(pattern_id, pattern_id)
-        # Re-add the header if the incoming code lacks one. Phase 1 locates a
-        # pattern's local file by grepping that line for its ID, so writing
-        # header-less code straight through would orphan the file from its ID.
-        code = ensure_header(code, local_path.stem if local_path else name, pattern_id)
+        code = ensure_header(code, local_path.stem if local_path else name)
         _save_pattern(
             pb,
             code=code,
@@ -548,6 +604,7 @@ def pixelblaze_update_pattern(
             pattern_id=pattern_id,
             capture=_wants_preview(project, capture_preview),
         )
+        controls = _read_controls(pb)
 
     if local_path is None:
         # An unknown pattern needs a project to land in; without one, the device
@@ -557,8 +614,12 @@ def pixelblaze_update_pattern(
             "this ID, so nothing was saved locally. Use pixelblaze_create_pattern with a "
             "`project` to keep a local copy."
         )
-    stamp_file(local_path, code, pattern_id, _now_utc())
-    return f"Updated pattern '{name}' ({pattern_id}) — stamped {local_path.name}"
+    write_pattern_file(local_path, code, local_path.stem)
+    _record_deploy(local_path, code, pattern_id, resolved, controls)
+    return (
+        f"Updated pattern '{name}' ({pattern_id}) on {resolved.label} — "
+        f"wrote {local_path.name} and its sidecar"
+    )
 
 
 def pixelblaze_delete_pattern(pattern_id: str, device: str) -> str:

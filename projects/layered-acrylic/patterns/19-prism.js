@@ -1,4 +1,4 @@
-// Prism — Pattern ID: SFn2GnJP56XENkHvi
+// Prism
 //
 // Wide white beam sweeps across layers, splitting into a
 // rainbow spectrum. Front layers are white and narrow, back

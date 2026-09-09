@@ -16,156 +16,115 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .config import PROJECTS_DIR, Project
+from .config import Project
 
-_MCP_SENTINEL = "// ---- pixelblaze-mcp metadata----"
+# The header line names the pattern. The sidecar carries the Pattern IDs, one
+# per device, so the name is all that stays in the file itself. Keeping it here
+# is still worth a line: a pattern downloaded off a device would otherwise lose
+# its name on the way to disk.
+_HEADER_RE = re.compile(r"^// (.+?)\s*$", re.MULTILINE)
 
-# Matches the sentinel line through end of file (greedy) — used to strip the block
-_MCP_BLOCK_RE = re.compile(r"\n*" + re.escape(_MCP_SENTINEL) + r".*$", re.DOTALL)
-
-_PATTERN_ID_RE = re.compile(r"// .+? — Pattern ID: (\S+)")
-_DEPLOYED_RE = re.compile(r"// @deployed: (.+)")
-_HASH_RE = re.compile(r"// @deployed-hash: ([0-9a-f]+)")
-_NAME_RE = re.compile(r"// (.+?) — Pattern ID:")
+# Recognised only so migration and older files can be read. Nothing writes these.
+_LEGACY_SENTINEL = "// ---- pixelblaze-mcp metadata----"
+_LEGACY_BLOCK_RE = re.compile(r"\n*" + re.escape(_LEGACY_SENTINEL) + r".*$", re.DOTALL)
+_LEGACY_ID_RE = re.compile(r"// .+? — Pattern ID: (\S+)")
+_LEGACY_NAME_RE = re.compile(r"// (.+?) — Pattern ID:")
+_LEGACY_DEPLOYED_RE = re.compile(r"// @deployed: (.+)")
+_LEGACY_HASH_RE = re.compile(r"// @deployed-hash: ([0-9a-f]+)")
 
 
 def code_hash(code: str) -> str:
-    """First 8 hex chars of SHA-256 of code content, excluding any mcp block."""
-    stripped = _MCP_BLOCK_RE.sub("", code).rstrip()
-    return hashlib.sha256(stripped.encode()).hexdigest()[:8]
+    """First 8 hex chars of SHA-256 over the code, trailing whitespace stripped.
+
+    Kept as a thin alias so callers here and in `sidecar` hash identically.
+    """
+    from .sidecar import content_hash
+
+    return content_hash(strip_legacy_block(code))
 
 
-def strip_mcp_block(content: str) -> str:
-    """Remove the mcp metadata block (and preceding blank line) from file content."""
-    return _MCP_BLOCK_RE.sub("", content).rstrip()
+def strip_legacy_block(content: str) -> str:
+    """Remove a pre-sidecar `// ---- pixelblaze-mcp metadata----` block.
+
+    Nothing writes these any more; this exists so files that still carry one
+    read correctly until they are migrated.
+    """
+    return _LEGACY_BLOCK_RE.sub("", content).rstrip()
 
 
-def _parse_mcp_block(content: str) -> dict[str, str | None]:
-    """Extract deployed_at and stored_hash from the mcp metadata block, if present."""
-    m = re.search(re.escape(_MCP_SENTINEL) + r"(.+?)$", content, re.DOTALL)
-    if not m:
-        return {"deployed_at": None, "stored_hash": None}
-    block = m.group(0)
-    deployed_m = _DEPLOYED_RE.search(block)
-    hash_m = _HASH_RE.search(block)
+def parse_legacy_block(content: str) -> dict[str, str | None]:
+    """The `@deployed` / `@deployed-hash` / Pattern ID a pre-sidecar file carries.
+
+    Used by the migration script to build a sidecar from a stamped file.
+    """
+    id_m = _LEGACY_ID_RE.search(content)
+    name_m = _LEGACY_NAME_RE.search(content)
+    deployed_m = _LEGACY_DEPLOYED_RE.search(content)
+    hash_m = _LEGACY_HASH_RE.search(content)
     return {
+        "pattern_id": id_m.group(1) if id_m else None,
+        "name": name_m.group(1).strip() if name_m else None,
         "deployed_at": deployed_m.group(1).strip() if deployed_m else None,
-        "stored_hash": hash_m.group(1) if hash_m else None,
+        "deployed_hash": hash_m.group(1) if hash_m else None,
     }
 
 
-def stamp_file(path: Path, code: str, pattern_id: str, deployed_at: str | None) -> None:
-    """Write a pattern JS file stamped with mcp metadata at the end.
+def has_legacy_block(content: str) -> bool:
+    return _LEGACY_SENTINEL in content or bool(_LEGACY_ID_RE.search(content))
 
-    deployed_at=None marks the pattern as pending (never deployed to device).
-    Also updates any '(pending)' Pattern ID placeholder in the first comment line
-    when a real pattern_id is provided.
+
+def write_pattern_file(path: Path, code: str, name: str) -> None:
+    """Write a pattern's JS file: a name-only header line, then the code.
+
+    No metadata is stored in the file. Where the pattern has been deployed, and
+    with what control values, lives in its `.sidecar.toml`.
     """
-    ts = deployed_at or "(pending)"
-    body = strip_mcp_block(code)
-
-    # Replace (pending) placeholder in the first comment line with the real ID
-    if deployed_at is not None:
-        body = re.sub(
-            r"(// .+? — Pattern ID: )\(pending\)",
-            rf"\g<1>{pattern_id}",
-            body,
-            count=1,
-        )
-
-    # Hash the body as it will be written (after the ID substitution), so a
-    # freshly stamped file does not immediately read as modified.
-    h = code_hash(body)
-
-    mcp_block = (
-        f"\n\n{_MCP_SENTINEL}\n"
-        f"// @deployed: {ts}\n"
-        f"// @deployed-hash: {h}\n"
-        f"// @modified-since-deployed: false\n"
-    )
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body + mcp_block, encoding="utf-8")
-
-
-def update_local_code(path: Path, new_code: str) -> None:
-    """Save new code to an existing local file, preserving the mcp metadata block.
-
-    The stored hash is intentionally NOT updated — leaving a mismatch so that
-    list_local_patterns and parse_pattern_file report modified_since_deployed=True.
-    The @modified-since-deployed line in the file is also set to true explicitly.
-    """
-    content = path.read_text(encoding="utf-8")
-    mcp = _parse_mcp_block(content)
-    body = strip_mcp_block(new_code)
-
-    if mcp["deployed_at"] is not None:
-        # Re-write with unchanged deployed_at/hash so the drift is detectable
-        mcp_block = (
-            f"\n\n{_MCP_SENTINEL}\n"
-            f"// @deployed: {mcp['deployed_at']}\n"
-            f"// @deployed-hash: {mcp['stored_hash']}\n"
-            f"// @modified-since-deployed: true\n"
-        )
-        path.write_text(body + mcp_block, encoding="utf-8")
-    else:
-        # No mcp block yet — just write the code; will be stamped on first deploy
-        path.write_text(body, encoding="utf-8")
+    path.write_text(ensure_header(code, name).rstrip() + "\n", encoding="utf-8")
 
 
 def parse_pattern_file(path: Path) -> dict[str, Any]:
-    """Parse a pattern JS file and return metadata including live modified status."""
+    """Parse a pattern JS file: its name, its code, and its deployment history.
+
+    Deployment facts come from the sidecar, so `modified_since_deployed` is
+    computed by comparing the current code's hash with what the front entry
+    recorded. It is None when the pattern has never been deployed.
+    """
+    from . import sidecar as sidecar_mod
+
     content = path.read_text(encoding="utf-8")
-    mcp = _parse_mcp_block(content)
-    code = strip_mcp_block(content)
+    code = strip_legacy_block(content)
+    legacy = parse_legacy_block(content)
 
-    name_m = _NAME_RE.search(content)
-    id_m = _PATTERN_ID_RE.search(content)
-    name = name_m.group(1) if name_m else path.stem
-    pattern_id = id_m.group(1) if id_m else None
+    # A migrated file has a name-only header; a legacy one has `Name — Pattern ID: x`.
+    name = legacy["name"]
+    if not name:
+        header = _HEADER_RE.search(content)
+        name = header.group(1).strip() if header else path.stem
 
-    stored_hash = mcp["stored_hash"]
-    deployed_at = mcp["deployed_at"]
-
-    # Dynamically compute modified status by re-hashing current code vs stored hash
-    if stored_hash is None or deployed_at is None:
-        modified: bool | None = None  # no metadata — unknown
-    elif deployed_at == "(pending)":
-        modified = False  # never deployed; not "modified since deploy"
-    else:
-        modified = code_hash(code) != stored_hash
-
+    sc = sidecar_mod.load(path)
+    front = sc.front
     return {
         "name": name,
-        "pattern_id": pattern_id,
-        "deployed_at": deployed_at,
-        "stored_hash": stored_hash,
-        "modified_since_deployed": modified,
         "path": path,
         "code": code,
+        "sidecar": sc,
+        "pattern_id": front.pattern_id if front else legacy["pattern_id"],
+        "device_id": front.device_id if front else None,
+        "device_name": front.device_name if front else None,
+        "deployed_at": front.deployed_at.isoformat().replace("+00:00", "Z") if front
+        else legacy["deployed_at"],
+        "modified_since_deployed": sc.modified_since_deployed(code),
+        "legacy_metadata": has_legacy_block(content),
     }
 
 
-
 def find_local_pattern_file(pattern_id: str) -> Path | None:
-    """Find the JS file carrying a given Pattern ID, across every project.
+    """The pattern file whose sidecar records this ID, across every project."""
+    from . import sidecar as sidecar_mod
 
-    Phase 1 of plan 01 keeps the ID in the file's header line, so this greps
-    `projects/*/patterns/*.js`. It is cheap (a few dozen small files) and
-    unambiguous: IDs are 17 random characters minted per device, so collisions
-    do not happen in practice. Phase 2 replaces this with the same scan over
-    `*.sidecar.toml`, which is the same shape with the ID in a different file.
-    """
-    if not PROJECTS_DIR.exists():
-        return None
-    needle = f"Pattern ID: {pattern_id}"
-    for path in sorted(PROJECTS_DIR.glob("*/patterns/*.js")):
-        try:
-            if needle in path.read_text(encoding="utf-8"):
-                return path
-        except OSError:
-            continue
-    return None
+    hit = sidecar_mod.find_by_pattern_id(pattern_id)
+    return hit[0] if hit else None
 
 
 # Characters that are illegal in filenames on Windows (superset of macOS/Linux).
@@ -234,13 +193,22 @@ def new_pattern_file_path(stem: str, project: Project) -> Path:
     return project.patterns_dir / f"{stem}.js"
 
 
-def ensure_header(code: str, name: str, pattern_id: str = "(pending)") -> str:
-    """Prepend the `// <Name> — Pattern ID: <id>` header line if the code lacks one.
+def ensure_header(code: str, name: str) -> str:
+    """Make sure the file's first line is the name-only header `// <Name>`.
 
-    `name` is the local filename stem, not the device display name: the header
-    identifies the local file, and phase 1 of plan 01 still locates a pattern's
-    file by grepping this line for its ID.
+    The check is against the expected name, not merely "starts with //". Plenty
+    of patterns open with a comment block of their own, and treating any leading
+    comment as the header silently loses the name — which is the one thing the
+    header exists to carry, now that Pattern IDs live in the sidecar.
+
+    A legacy `// <Name> — Pattern ID: <id>` line counts as the header until the
+    file is migrated, so this stays idempotent either way.
     """
-    if _PATTERN_ID_RE.search(code):
+    stripped = code.lstrip()
+    first = stripped.splitlines()[0].strip() if stripped else ""
+    if first == f"// {name}":
         return code
-    return f"// {name} — Pattern ID: {pattern_id}\n{code.lstrip()}"
+    legacy = _LEGACY_NAME_RE.match(first)
+    if legacy and legacy.group(1).strip() == name:
+        return code
+    return f"// {name}\n{stripped}"

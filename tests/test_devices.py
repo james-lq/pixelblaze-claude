@@ -139,7 +139,7 @@ def test_an_unknown_chip_id_says_so(make_registry):
 
 
 def test_omitting_the_device_lists_what_is_registered(make_registry):
-    """Phase 1 has no sidecar to fall back to, so this is always an error."""
+    """With no pattern or project to infer from, there is no history to consult."""
     with pytest.raises(ValueError) as e:
         resolve_device(None, registry=make_registry(TWO_DEVICES))
     assert "PB LQ 0A4 SENSOR" in str(e.value) and "PB LQ 56C SENSOR" in str(e.value)
@@ -222,3 +222,87 @@ def test_summary_lists_every_device(make_registry):
 
 def test_summary_of_an_empty_registry_says_so(workspace):
     assert "no devices registered" in load_devices().summary()
+
+
+# --- Inferring the device from deployment history -------------------------
+
+
+def _deployed(project, name, device_id, day):
+    """A pattern in `project` last deployed to `device_id` on 2026-09-<day>."""
+    from datetime import datetime, timezone
+
+    from pixelblaze_mcp import sidecar as sc
+
+    path = project.patterns_dir / name
+    path.write_text(f"// {path.stem}\n", encoding="utf-8")
+    s = sc.load(path)
+    s.record(
+        device_id=device_id,
+        pattern_id="id-" + name,
+        deployed_hash="aaaaaaaa",
+        deployed_at=datetime(2026, 9, day, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    s.save()
+    return path
+
+
+def test_the_device_comes_from_the_pattern_s_own_history(make_registry, make_project):
+    """A redeploy needs no argument: the front sidecar entry names the device."""
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    path = _deployed(proj, "01 Alpha.js", "0x00AC056C", 9)
+
+    device = resolve_device(None, registry=registry, project=proj, pattern_path=path)
+    assert device.chip_id == "0x00AC056C"
+
+
+def test_the_pattern_s_history_wins_over_the_project_s(make_registry, make_project):
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    _deployed(proj, "02 Beta.js", "0x00AC00A4", 11)  # the project's most recent
+    path = _deployed(proj, "01 Alpha.js", "0x00AC056C", 9)
+
+    device = resolve_device(None, registry=registry, project=proj, pattern_path=path)
+    assert device.chip_id == "0x00AC056C"
+
+
+def test_a_new_pattern_falls_back_to_the_project_s_last_device(make_registry, make_project):
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    _deployed(proj, "01 Alpha.js", "0x00AC00A4", 8)
+    _deployed(proj, "02 Beta.js", "0x00AC056C", 11)
+    fresh = proj.patterns_dir / "03 Gamma.js"
+    fresh.write_text("// 03 Gamma\n", encoding="utf-8")
+
+    device = resolve_device(None, registry=registry, project=proj, pattern_path=fresh)
+    assert device.chip_id == "0x00AC056C"  # the most recent across the project
+
+
+def test_an_explicit_device_overrides_the_history(make_registry, make_project):
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    path = _deployed(proj, "01 Alpha.js", "0x00AC056C", 9)
+
+    device = resolve_device("0x00AC00A4", registry=registry, project=proj, pattern_path=path)
+    assert device.chip_id == "0x00AC00A4"
+
+
+def test_history_naming_an_unregistered_device_is_an_error(make_registry, make_project):
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    path = _deployed(proj, "01 Alpha.js", "0xDEADBEEF", 9)
+
+    with pytest.raises(ValueError) as e:
+        resolve_device(None, registry=registry, project=proj, pattern_path=path)
+    assert "0xDEADBEEF" in str(e.value)
+    assert "discover_devices" in str(e.value)
+
+
+def test_a_project_with_no_history_still_errors(make_registry, make_project):
+    registry = make_registry(TWO_DEVICES)
+    proj = make_project("H26-Finale", manifest="")
+    fresh = proj.patterns_dir / "01 Alpha.js"
+    fresh.write_text("// 01 Alpha\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no deployment history"):
+        resolve_device(None, registry=registry, project=proj, pattern_path=fresh)

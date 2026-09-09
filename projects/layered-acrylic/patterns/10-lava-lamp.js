@@ -1,4 +1,4 @@
-// Lava Lamp — Pattern ID: ibahzcpKGvr8482YH
+// Lava Lamp
 //
 // Slow-moving blobs of warm color drift back and forth along
 // each layer's LEDs. Languid, organic, meditative feel.

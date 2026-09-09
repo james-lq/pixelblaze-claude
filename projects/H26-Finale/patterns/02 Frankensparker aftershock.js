@@ -1,4 +1,4 @@
-// 02 Frankensparker aftershock — Pattern ID: mSXJ5etzaarWuZSPv
+// 02 Frankensparker aftershock
 /*
   Effect: every output expander channel runs its own copy of the spark. On
   each channel a bright white spark crosses that channel's strip in 250 ms
@@ -224,8 +224,3 @@ export function render(index) {
   }
   hsv(0, 0, v)
 }
-
-// ---- pixelblaze-mcp metadata----
-// @deployed: 2026-09-08T02:59:12Z
-// @deployed-hash: 4eebd6b9
-// @modified-since-deployed: false

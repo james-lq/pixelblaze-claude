@@ -1,4 +1,4 @@
-// Pixel map for project-sound-level-meter
+// Pixel map for sound-level-meter
 //
 // 8×12 grid: two WS2811 strings of 50 LEDs each (48 active + 2 unused per string).
 // Each string zig-zags through 4 vertical columns of 12 LEDs.

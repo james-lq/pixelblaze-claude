@@ -1,4 +1,4 @@
-// Rain on Glass — Pattern ID: BrnsY9gYHDTFESbWK
+// Rain on Glass
 //
 // Bright drops appear at random X positions on the front layer
 // and propagate through to back layers with delay and dimming,

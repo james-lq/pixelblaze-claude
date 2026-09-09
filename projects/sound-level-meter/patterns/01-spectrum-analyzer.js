@@ -1,4 +1,4 @@
-// Spectrum Analyzer — Pattern ID: 6bKeDpbiKYDKMKNkE
+// Spectrum Analyzer
 //
 // Effect: 8-band VU-style spectrum analyzer across 2 vertical strings of 50 LEDs.
 // Each string holds 4 frequency bins of 12 LEDs, with 1 dark padding pixel at each
@@ -138,8 +138,3 @@ export function sliderPeakDecay(v) { peakDecayRate = mix(0.02, 0.5, v) }
 export function sliderBrightness(v) { brightness = mix(0.2, 1.0, v) }
 // Minimum signal level treated as silence (tune to eliminate ambient noise)
 export function sliderNoiseFloor(v) { noiseFloor = mix(0, 0.2, v) }
-
-// ---- pixelblaze-mcp metadata----
-// @deployed: 2026-04-23T03:53:14Z
-// @deployed-hash: f511dce3
-// @modified-since-deployed: false

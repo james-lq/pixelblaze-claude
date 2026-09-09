@@ -1,4 +1,4 @@
-// Sparkle Rain — Pattern ID: Agp2JmNK4ot3a4XsA
+// Sparkle Rain
 //
 // Dense sparkling particles cascade front-to-back through
 // layers like falling glitter. Sparks drift slightly along X

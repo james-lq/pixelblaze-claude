@@ -1,4 +1,4 @@
-// Bouncing Balls — Pattern ID: nQBxyYaJHX72KFWqi
+// Bouncing Balls
 //
 // Balls bounce around the display with elliptical shapes —
 // stretched along X (smooth within layers) and narrow across Y

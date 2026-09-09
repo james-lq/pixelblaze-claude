@@ -1,4 +1,4 @@
-// Aurora Borealis — Pattern ID: hWrLhGfHrpw9xSjy6
+// Aurora Borealis
 //
 // Slow sinuous bands of cool color drift along each layer.
 // Wide hue spread (60% of color wheel) ensures strong

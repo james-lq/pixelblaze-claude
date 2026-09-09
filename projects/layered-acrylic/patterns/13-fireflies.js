@@ -1,4 +1,4 @@
-// Fireflies — Pattern ID: sFcRqwv7ves6C98CK
+// Fireflies
 //
 // Random bright sparks appear and fade across layers over a
 // twilight ambient shimmer. Fireflies drift slightly along X

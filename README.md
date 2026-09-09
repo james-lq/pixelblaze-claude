@@ -38,18 +38,39 @@ cd pixelblaze-ai
 uv sync
 ```
 
-### 2. Configure your PixelBlaze host
+### 2. Register your PixelBlaze devices
 
-Create a `.env` file in the project root (this file is gitignored):
+Devices live in `devices.toml` at the repo root, keyed by each controller's immutable hardware chip ID. The quickest way to create it is to let the tooling find your devices:
 
+```bash
+uv run python -c "from pixelblaze_mcp.pixelblaze_tools import pixelblaze_discover_devices as d; print(d())"
 ```
-PIXELBLAZE_HOST=<your-pixelblaze-ip>
-PROJECT_FOLDER=project-layered-acrylic
+
+That listens for the UDP beacons every PixelBlaze broadcasts, reads each one's chip ID and name, and writes an entry per device. Or write the file by hand:
+
+```toml
+[devices.0x00AC056C]
+name = "PB LQ 56C SENSOR"
+host = "10.0.1.107"
+notes = """
+Free-form Markdown. Yours; the tooling never touches this field.
+"""
 ```
 
-Set `PROJECT_FOLDER` to whichever project folder you are currently working on. The MCP server will use its `patterns/` subfolder automatically.
+The chip ID is `0x` plus 8 upper-case hex digits. `name` and `host` are refreshed by `pixelblaze_list_devices(check=True)`; every connection verifies the device at `host` reports the expected chip ID and refuses to continue if it does not, so a DHCP reshuffle cannot silently redirect a deploy.
 
-Optional: `PIXELBLAZE_PREVIEW_CAPTURE=0` skips the ~6 s live thumbnail capture on each save and stores a placeholder thumbnail instead.
+There is no `.env` and nothing to restart: `devices.toml` and each project's `project.toml` are read on every call.
+
+### 2b. Set up a project (optional)
+
+Patterns live under `projects/<name>/patterns/`. A project needs no configuration — an absent `project.toml` means all defaults — but the file lets you set the prefix its patterns take on the device, whether ordinals are auto-assigned, a pixel map, and whether thumbnails are captured on save:
+
+```toml
+pattern_name_prefix = "H26-Finale"   # defaults to the folder name; "" for none
+ordinals = "auto"                    # or "none"
+pixel_map = "pixel-map.js"
+preview_capture = true
+```
 
 ### 3. Create the MCP config
 
@@ -117,6 +138,8 @@ Claude has access to these PixelBlaze tools:
 
 | Tool | Description |
 |------|-------------|
+| `pixelblaze_list_devices` | List registered devices; `check=True` queries each and refreshes it |
+| `pixelblaze_discover_devices` | Find PixelBlazes on the LAN and register new ones |
 | `pixelblaze_create_pattern` | Create and activate a new pattern |
 | `pixelblaze_update_pattern` | Update an existing pattern's code |
 | `pixelblaze_delete_pattern` | Remove a pattern from the device |
@@ -124,6 +147,10 @@ Claude has access to these PixelBlaze tools:
 | `pixelblaze_set_active_pattern` | Switch to a specific pattern |
 | `pixelblaze_get_active_pattern` | See which pattern is running |
 | `pixelblaze_get_pattern_code` | Read a pattern's source code |
+| `pixelblaze_list_local_patterns` | List local pattern files and their deploy status |
+| `pixelblaze_deploy_local_pattern` | Deploy a local pattern file to a device |
+| `pixelblaze_regenerate_preview` | Rebuild a pattern's list thumbnail |
+| `pixelblaze_set_offline_mode` | Work on local files with no device present |
 | `pixelblaze_set_brightness` | Set display brightness (0-1) |
 | `pixelblaze_get_controls` | Read current slider/control values |
 | `pixelblaze_set_control` | Set a slider/control value |
@@ -133,12 +160,31 @@ Claude has access to these PixelBlaze tools:
 ## Workspace Structure
 
 ```
-pixelblaze-ai/
-  .mcp.json             # MCP server config (gitignored)
-  .env                  # PIXELBLAZE_HOST and PATTERNS_DIR (gitignored)
-  CLAUDE.md             # Framework instructions for Claude
-  pyproject.toml        # Python project config
-  src/pixelblaze_mcp/   # MCP server source
-  docs/pixelblaze/      # Cached API reference
-  project-*/            # Per-project folders (CLAUDE.md + patterns/)
+pixelblaze-claude/
+  .mcp.json                  # MCP server config
+  devices.toml               # device registry, keyed by hardware chip ID
+  CLAUDE.md                  # framework instructions for Claude
+  pyproject.toml             # Python project config
+  src/pixelblaze_mcp/        # MCP server source
+  tests/                     # pytest suite; needs no device
+  docs/pixelblaze/           # cached API reference
+  projects/
+    <name>/
+      project.toml           # prefix, ordinals, pixel map, preview capture
+      CLAUDE.md              # this rig's layout and design principles
+      pixel-map.js           # optional project-level pixel map
+      patterns/
+        NN Name.js               # pattern source, header line names it
+        NN Name.sidecar.toml     # where it has been deployed, and with what
+        NN Name.mapper.js        # optional per-pattern pixel map
 ```
+
+Every tool that touches hardware takes a `device` — a chip ID, a display name, or an IP. Tools that work on local files take a `project` or a `file_path`. A pattern that has been deployed before can be redeployed with no `device` at all: its sidecar records where it last went.
+
+## Running the tests
+
+```bash
+uv run pytest
+```
+
+None of them need a device.

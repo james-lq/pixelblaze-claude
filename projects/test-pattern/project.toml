@@ -1,7 +1,7 @@
 # Prefix for the on-device display name so a project's patterns group together
 # in the Pixelblaze pattern list. Local filenames never carry it. Defaults to the
 # project folder name; set to "" to deploy patterns under their bare filenames.
-#pattern_name_prefix = "test-pattern"
+pattern_name_prefix = "_TEST "
 
 # "auto" prepends the next free two-digit ordinal (`NN `) to a new pattern's name
 # when it lacks one, which makes the web UI's alphabetical sort useful.

@@ -1,4 +1,4 @@
-# TODO — project-h26-frankensparker
+# TODO — H26-Finale
 
 Open items for this project only. Workspace and MCP tooling items live in the root `TODO.md`.
 

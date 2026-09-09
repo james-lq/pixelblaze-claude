@@ -1,4 +1,4 @@
-// DNA Helix — Pattern ID: FS2Mz2ixvCfsHF4QT
+// DNA Helix
 //
 // Two strands weave back and forth across each layer, with
 // phase offsets through depth creating a rotating double helix.

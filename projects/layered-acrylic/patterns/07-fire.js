@@ -1,4 +1,4 @@
-// Fire — Pattern ID: y5qec8aPTGZWj6TmP
+// Fire
 //
 // Symmetric fire: both edges white-hot, center deep red.
 // Dual Perlin noise layers for organic flickering texture.

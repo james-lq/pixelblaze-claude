@@ -11,6 +11,7 @@ tooling only touches keys it owns (`name` and `host` in the registry; nothing
 in a project manifest today).
 """
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing import Any, Literal
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_ROOT: Path = Path(__file__).parent.parent.parent
 DOCS_DIR: Path = WORKSPACE_ROOT / "docs" / "pixelblaze"
@@ -227,9 +230,15 @@ class Project(BaseModel):
     @property
     def pattern_name_prefix(self) -> str:
         """Prefix for on-device display names. Defaults to the folder name;
-        an explicit empty string in the manifest means no prefix at all."""
+        an explicit empty string in the manifest means no prefix at all.
+
+        Surrounding whitespace is stripped. The prefix is joined to the rest of
+        the name with a single space, so the separator is not something to
+        configure, and writing `"H26 "` would otherwise land a double space in
+        the device's display name.
+        """
         prefix = self.manifest.pattern_name_prefix
-        return self.name if prefix is None else prefix
+        return self.name if prefix is None else prefix.strip()
 
     @property
     def ordinals(self) -> str:
@@ -317,25 +326,52 @@ def resolve_device(
     *,
     registry: Registry | None = None,
     project: Project | None = None,
+    pattern_path: Path | None = None,
 ) -> Device:
-    """Find the device a tool call should target.
+    """Find the device a tool call should target, in this order:
 
-    `device` accepts, in this order: a chip ID; a display name, case-insensitive;
-    a host already in the registry; or a literal IP or dotted hostname, which is
-    used as an ad-hoc device with no ID verification.
-
-    Falling back when `device` is omitted needs the pattern sidecar, which
-    arrives in phase 2 of plan 01: the pattern's last device, then the project's
-    most recently deployed one. Until then an omitted `device` is an error
-    listing what is registered.
+    1. the explicit `device` argument — a chip ID; a display name,
+       case-insensitive; a host already in the registry; or a literal IP or
+       dotted hostname, used as an ad-hoc device with no ID verification;
+    2. the front entry of `pattern_path`'s sidecar, i.e. where this pattern
+       last went — which is what makes a redeploy need no argument;
+    3. the most recently deployed device across the project's sidecars, a
+       better guess for a brand-new pattern than a manifest field that would
+       go stale;
+    4. otherwise an error listing what is registered.
     """
     registry = registry or load_devices()
 
     if device is None:
+        # Imported here rather than at module scope: sidecar imports this module.
+        from . import sidecar as sidecar_mod
+
+        inferred: str | None = None
+        source = ""
+        if pattern_path is not None:
+            front = sidecar_mod.load(pattern_path).front
+            if front is not None:
+                inferred, source = front.device_id, "this pattern's last deploy"
+        if inferred is None and project is not None:
+            inferred = sidecar_mod.most_recent_device(project.patterns_dir)
+            source = f"the most recent deploy in project '{project.name}'"
+
+        if inferred is not None:
+            known = registry.devices.get(inferred)
+            if known is not None:
+                logger.info("Device not given; using %s, from %s.", known.label, source)
+                return known
+            raise ValueError(
+                f"{source} names device {inferred}, which is not in {registry.path.name}. "
+                f"Pass `device` explicitly, or run pixelblaze_discover_devices. "
+                f"Registered devices:\n{registry.summary()}"
+            )
+
         where = f" for project '{project.name}'" if project else ""
         raise ValueError(
-            f"No device specified{where}. Pass `device` as a chip ID, a display name, "
-            f"or an IP address. Registered devices:\n{registry.summary()}"
+            f"No device specified{where}, and no deployment history to infer one from. "
+            f"Pass `device` as a chip ID, a display name, or an IP address. "
+            f"Registered devices:\n{registry.summary()}"
         )
 
     text = device.strip()

@@ -1,4 +1,4 @@
-// Meteor Shower — Pattern ID: eBnciMpBWWAyrD5qk
+// Meteor Shower
 //
 // Bright streaks with fading trails race across each layer's
 // LEDs. Deterministic speed spread ensures adjacent layers

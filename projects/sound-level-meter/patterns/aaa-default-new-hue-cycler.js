@@ -1,4 +1,4 @@
-// AAA Default New Hue Cycler — Pattern ID: geSNcoPZTR45q6xd4
+// AAA Default New Hue Cycler
 //
 // Simple hue cycler: all LEDs cycle through the full color wheel
 // over time, with hue offset by position so the strip shows a

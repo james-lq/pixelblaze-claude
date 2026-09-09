@@ -1,20 +1,8 @@
 # TODO
 
-## Device configuration
-
-- The device address lives in the root `.env` and is read once when the MCP server starts, so pointing the tooling at a different device requires restarting the server. Make the device configurable per project instead.
-
-- Stretch: define named devices, so deploying a project to a particular device is a first-class operation rather than an `.env` edit.
-
-## Pattern naming and metadata
-
-- Allow projects to define a pattern name prefix, e.g. `H26 - `
-
-- Move the auto-generated metadata block to a sidecar file (see `CLAUDE.md` TODO) rather than patching the in-file parser further. Needs a migration for already-stamped files in the existing projects; do as its own commit.
-
 ## Code sharing between patterns
 
-- Establish a code-sharing workflow so patterns can reuse a common block instead of copy-pasting it between files. The motivating case is the per-channel engine in `project-h26-frankensparker`, which every pattern in that project wants and which is currently duplicated by hand. The Pixelblaze language has no imports, so sharing has to happen before the code reaches the device — for example a deploy-time include directive (`// @include lib/channels.js`) resolved by the MCP tooling.
+- Establish a code-sharing workflow so patterns can reuse a common block instead of copy-pasting it between files. The motivating case is the per-channel engine in `projects/H26-Finale`, which every pattern in that project wants and which is currently duplicated by hand. The Pixelblaze language has no imports, so sharing has to happen before the code reaches the device — for example a deploy-time include directive (`// @include lib/channels.js`) resolved by the MCP tooling.
   - Main design constraint: naive expansion breaks the download-and-diff round-trip, because the code on the device would no longer match the file being edited. The expanded region needs delimiters the downloader recognises so an include can be re-collapsed back to the directive on the way in.
   - Decide where shared code lives: per project (`project-*/lib/`), workspace-wide, or both.
   - Consider whether the same mechanism should cover `.mapper.js` files, which have the same "separate file that has to be combined with the pattern" shape.
@@ -25,7 +13,7 @@
 
 - Support merging control values a la carte rather than all-or-nothing. `setControls` replaces the whole stored control map instead of merging into it, so writing a single control silently wipes every other value on that pattern back to uninitialised garbage. Observed 2026-09-07 on `02 Frankensparker aftershock`: setting one input reset the other four. The workaround is to read the full map, merge locally, and write it back whole, which every caller currently has to remember to do. A `pixelblaze_set_control` that merges by default would remove the footgun.
 
-- Consider a per-pattern sidecar file holding control values, both declared defaults and the last-known "current" values pulled off the device. Would give several things at once: values under version control instead of living only in device flash, a way to seed a brand-new control on first deploy rather than letting it read uninitialised memory (see the default control values item above), restore onto a replacement device or after a reflash, and a diffable record of tuning. Probably shares a mechanism with the metadata sidecar item above, so consider designing the two together.
+- Now that `<stem>.sidecar.toml` carries per-device control values, use them: seed a brand-new control on first deploy from the front entry rather than letting it read uninitialised memory, and add `pixelblaze_restore_controls` for the replacement-device and post-reflash cases. Plan 01 section 6 has the rules; it waits on the merge fix above.
 
 ## MCP tooling
 

@@ -1,4 +1,4 @@
-// Comet — Pattern ID: W4KtSEgev2W4bYoA5
+// Comet
 //
 // Multiple comets corkscrew through the layers with random
 // spawn timing, speed, direction, color, and trail length.

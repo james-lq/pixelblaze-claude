@@ -1,4 +1,4 @@
-# project-test-pattern
+# test-pattern
 
 Scratch project for verifying that the `pixelblaze-claude` tooling (MCP server, pattern file conventions, deploy/update round-trip) works against the current Pixelblaze device. Patterns here are throwaway functionality tests, not production effects.
 
