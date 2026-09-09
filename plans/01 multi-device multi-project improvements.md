@@ -6,6 +6,19 @@ Related open items in the root `TODO.md`: *Device configuration* (both items), *
 
 Changes from draft 3: TOML and `.sidecar.toml` confirmed; `slug` becomes `pattern_name_prefix`, defaulting to the folder name with an empty string allowed; config examples comment out every token that has a well-defined default; the device ID question is settled against a live device and the initial registry entry is written down; the deployment history cap is removed.
 
+## 0. Notes for the implementing session
+
+This plan is meant to be picked up cold. Read, in order: the root `CLAUDE.md` (tool-loading quirk, file conventions), this plan, then `src/pixelblaze_mcp/config.py`, `pattern_file.py`, and `pixelblaze_tools.py` (about 700 lines total; `server.py` just registers tools).
+
+Working constraints:
+
+- **Never commit without being asked.** Make changes in the working tree and stop.
+- **Do not modify, rename, or delete any pattern that already exists on `10.0.1.106`.** Smoke tests go through the `test-pattern` project, creating new throwaway patterns and deleting only those. The device is carrying a pixel map; do not push a map to it until section 5 is being implemented and the map has been downloaded first.
+- **MCP server code changes need the server restarted** (`/mcp` in Claude Code) before the tools reflect them. This is the ordinary edit loop and is not the restart problem this plan removes; that one is about *configuration* changes.
+- `.venv` is Python 3.14; `pyproject.toml` requires 3.11+. `tomlkit` and `pytest` are the only new dependencies (section 10). Add them with `uv add` / `uv add --dev`.
+- There are no tests today. Section 10 says what to add; do it alongside each phase rather than at the end.
+- Workspace root is the directory containing `devices.toml` (today it is found as `Path(__file__).parent.parent.parent` in `config.py`; keep that). Relative `file_path` arguments resolve from there, replacing the current `PATTERNS_DIR.parent.parent` hack.
+
 ## 1. Where things stand today
 
 A quick audit of the current tooling, so the plan is grounded in what actually has to change.
@@ -55,21 +68,24 @@ All three config files are TOML, read and written with `tomlkit` so that comment
 
 ### 3.1 Device registry: `devices.toml`
 
-Keyed by the device's immutable hardware ID, with the display name as the first field so the file scans by eye. Tool-maintainable: `discover_devices` and `list_devices` may add entries and refresh `name` / `host`; `notes` is human-owned and never touched by tooling.
+Keyed by the device's immutable hardware ID, with the display name as the first field so the file scans by eye. Tool-maintainable: `discover_devices` and `list_devices` may add entries and refresh `name` / `host`. `notes` is human-owned and never touched by tooling; it is a TOML multi-line basic string whose content is **Markdown by convention**, so it stays easy to read and to update by hand or through Claude, and can carry lists, emphasis, and links to project docs. Tools that display a registry entry print it verbatim.
 
 This is the intended initial content, taken from the device that was reachable at the time of writing (read-only; nothing on it was changed). The second device is listed as a stub until it is back on the network and `discover_devices` can fill in its ID.
 
 ```toml
 # Pixelblaze device registry. Table keys are the hardware chip ID (from getConfig's
 # `chipId`, and the same value the UDP discovery beacon sends), written as 8 lower-case
-# hex digits. `name` and `host` are refreshed by the tooling; `notes` is yours.
+# hex digits. `name` and `host` are refreshed by the tooling. `notes` is yours: a
+# multi-line string, Markdown by convention, never touched by tooling.
 
 [devices.00ac00a4]
 name = "PB LQ 0A4 SENSOR"
 host = "10.0.1.106"
 notes = """
-Pixelblaze v3 (pb32), firmware 3.67, sensor board, no output expander.
-50 px, GRB, currently carrying a 698-char pixel map and 46 patterns (mostly examples).
+Pixelblaze v3 (pb32), firmware 3.67, **sensor board**, no output expander.
+
+- 50 px, GRB
+- Carrying a 698-char pixel map and 46 patterns (mostly Electromage examples) as of 2026-09-08
 """
 
 # ID unknown until the device is reachable; run pixelblaze_discover_devices to fill it in.
@@ -81,7 +97,7 @@ Pixelblaze v3 (pb32), firmware 3.67, sensor board, no output expander.
 Identity, weakest to strongest:
 
 - **`host`** is only how the tooling reaches the device. DHCP can reassign it.
-- **`name`** is the device's own configured display name. It is echoed everywhere a human reads output (tool results, `list_local_patterns`, sidecars) so associations are easy to make at a glance, but it changes in the web UI in two seconds, so tooling treats it purely as a **hint**: a mismatch between registry and device produces a warning and a refreshed value, never an error.
+- **`name`** is the device's own configured display name. It is echoed everywhere a human reads output (tool results, `list_local_patterns`, sidecars) so associations are easy to make at a glance, but it changes in the web UI in two seconds, so tooling treats it purely as a **hint**: a mismatch between registry and device produces a warning, never an error. Only `list_devices(check=True)` and `discover_devices` write the refreshed value back; an ordinary tool call never writes `devices.toml`, so a deploy does not produce a surprise diff in the registry.
 - **The table key** is the immutable hardware ID. Every connection verifies the device at `host` reports this ID and **refuses to proceed** on a mismatch. This is the guard against deploying to the wrong box after a DHCP reshuffle.
 
 **Referring to a device in a tool call.** The `device` argument accepts, in this order: an exact hardware ID; a display name, case-insensitive; a literal IP or hostname (an **ad-hoc device**, used directly with no verification, for one-off "try it on this other box"). A display name that matches more than one entry is an error that lists the IDs. Names are resolved to IDs at call time, so a renamed device only breaks the human's habit, never the sidecar records.
@@ -161,10 +177,11 @@ Semantics:
 - `deployment_history` is a **per-device** list, most recent first, one entry per device the pattern has ever been deployed to. Redeploying to a device already in the list updates that entry in place and moves it to the front. There is no cap: typical use is one or two devices, and a list that grows is not a problem worth code. It is deliberately not a log of every deploy; `git log` on the sidecar is the log.
 - **The front entry is the pattern's current device.** That is what "redeploy" means with no `device` argument.
 - `device_id` is the durable link to the registry. `device_name` is the human hint and is expected to drift.
-- `pattern_id` is the ID on that device. This replaces the header line's single ID.
-- `deployed_at` (a native TOML datetime), `deployed_hash`: as today. `modified-since-deployed` is not stored; it is computed by comparing the current file hash with the front entry's `deployed_hash`, as `parse_pattern_file()` already does.
+- `pattern_id` is the ID on that device. This replaces the header line's single ID. If the pattern has since been deleted from the device, the entry stays; a redeploy to that device notices the ID is gone, creates the pattern afresh, and updates the entry.
+- `deployed_at` (a native TOML offset datetime, UTC), `deployed_hash`: as today, i.e. the first 8 hex characters of SHA-256 over the file content as sent to the device (header line included, trailing whitespace stripped). `modified-since-deployed` is not stored; it is computed by comparing the current file hash with the front entry's `deployed_hash`, as `parse_pattern_file()` already does. `map_hash` uses the same scheme over the map source text.
 - `map_hash`: hash of the pixel map on the device at deploy time (section 5). Lets the tooling notice a pattern was deployed against a different map than the one now declared.
-- `controls`: the control values live on that device, captured after each deploy and by `snapshot_controls`. The front entry's controls double as the defaults: a first deploy to a new device seeds from them, and a redeploy to a known device leaves the device's own stored values alone (section 6).
+- `controls`: the control values live on that device, captured after each deploy and by `snapshot_controls`. The front entry's controls double as the defaults: a first deploy to a new device seeds from them, and a redeploy to a known device leaves the device's own stored values alone (section 6). **Values are not all floats.** The device's own control store (`/p/<id>.c`, visible in the `.pbb` backup) holds sliders as floats, toggles as booleans, and colour pickers as arrays of three floats, e.g. `hsvPickerCrystal = [0.727, 0.683, 0.718]`. The sidecar stores them as the corresponding TOML types, and the tooling must not coerce.
+- **Renaming a pattern file** means renaming its sidecar (and any `.mapper.js`) with it; the tooling matches the three by stem and does not go looking for orphans. A `.js` with no sidecar is simply "never deployed".
 
 Once the sidecar exists, the header line simplifies to `// NN Name With Spaces` (name only). The tooling matches file to device pattern via the sidecar, falling back to display name. Keeping the name in the header is still useful because `pixelblaze_get_pattern_code` on a downloaded pattern otherwise loses it.
 
@@ -222,6 +239,14 @@ Add optional parameters rather than new tools wherever possible; optional parame
 | `pixelblaze_deploy_local_pattern` | `device`, `capture_preview` | project from `file_path`; device via chain step 2 |
 | `pixelblaze_list_local_patterns` | `project` | omit to list every project, grouped |
 
+Behaviours worth stating so they are not left to guesswork:
+
+- **An explicit `device` with no sidecar entry always creates a new pattern on that device** (fresh ID, new history entry moved to the front). It never updates a pattern on some other device.
+- `pixelblaze_delete_pattern(pattern_id, device)` removes the pattern from the device and **leaves the sidecar untouched**. The device is the source of truth for what is deployed; the sidecar is a record of where things went, and a stale entry costs nothing (the next deploy to that device simply finds no pattern under the recorded ID and mints a new one, updating the entry in place). No tool ever deletes a local `.js` or sidecar.
+- `pixelblaze_set_control(name, value)` must accept a float, a boolean, or a list of three floats, matching what the device stores (3.3). Today's signature is `float` only.
+- In offline mode, `create_pattern` writes the `.js` and no sidecar (phase 2) or a `(pending)` header (phase 1); `list_local_patterns` reports it as never deployed; `deploy_local_pattern` does the first deploy.
+- **Phase 1 file lookup by pattern ID.** Today `find_local_pattern_file(pattern_id)` greps the header line of every `.js` in one folder, `PATTERNS_DIR`, which `.env` pinned to a single project. Phase 1 removes that pin, but the sidecar that would map an ID to a file does not exist until phase 2, and `update_pattern(pattern_id, code)` receives nothing that identifies a project. So for the duration of phase 1 the same grep runs over `projects/*/patterns/*.js`, every project's folder. It is cheap (a few dozen small files) and unambiguous (IDs are 17 random characters minted per device, so collisions do not happen in practice). Phase 2 replaces it with the equivalent scan over `*.sidecar.toml`, which is the same shape with the ID in a different file.
+
 Design rule: **file paths are the primary handle for local-side operations; pattern IDs for device-side ones.** A file path implies its project. A pattern ID is globally unique in practice (random per device), so scanning every `projects/*/patterns/*.sidecar.toml` for it is cheap and reliable for `update_pattern`, and the entry it is found in names the device.
 
 ### 4.3 New tools
@@ -253,21 +278,25 @@ The `TODO.md` question of whether the include mechanism should also cover `.mapp
 Built entirely on the sidecar's per-device `controls`. The rules:
 
 1. **First deploy to a device** (no entry for it yet): after the save, push the front entry's `controls`, if any, with `setActiveControls(..., saveToFlash=True)`. This is the "defaults" behaviour and addresses the uninitialised-garbage TODO item without a separate defaults field. Needs the `TODO.md` verification about whether exported `var` initialisers are honoured; the sidecar approach works regardless of the answer.
-2. **Redeploy to a known device**: leave the device's stored values alone (they are per pattern ID in device flash and survive a code save), then **read them back** into that entry's `controls`. Every deploy therefore refreshes the sidecar, and tuning done in the web UI since the last deploy is captured rather than clobbered. A `controls="push"` argument forces the sidecar values onto the device instead, for the restore-after-reflash case.
+2. **Redeploy to a known device**: leave the device's stored values alone (confirmed from the `.pbb` backup: the device keeps them in a separate `/p/<id>.c` file next to the pattern binary, so a code save does not touch them), then **read them back** into that entry's `controls`. Every deploy therefore refreshes the sidecar, and tuning done in the web UI since the last deploy is captured rather than clobbered. A `controls="push"` argument forces the sidecar values onto the device instead, for the restore-after-reflash case.
 3. `pixelblaze_snapshot_controls(file_path, device=None)` does the read-back on demand, without a deploy. `pixelblaze_restore_controls(file_path, device=None)` does the push on demand.
 
 The `set_control` merge bug is fixed independently; once fixed, `pixelblaze_set_control` also updates the matching sidecar entry so the committed record tracks what was actually set.
 
 ## 7. Migration
 
-Done as its own commit, per `TODO.md`. A one-shot script `scripts/migrate_layout.py`, run once and then deleted, plus some `git mv`:
+Done as its own commit, per `TODO.md`. A script `scripts/migrate_layout.py` that takes a project name and is safe to run more than once (a file already migrated is skipped), so projects can be migrated as their device IDs become known; delete the script once every project is through. Plus some `git mv`:
 
 1. `git mv project-<x> projects/<X>` for each project. Proposed names: `H26-Finale` (from `project-h26-frankensparker`), and the rest with the `project-` prefix dropped: `daft26-turtle-curtain`, `fishy-sword-pulse`, `layered-acrylic`, `sound-level-meter`, `test-pattern`. Rename anything else at the same time if wanted; the names are not load-bearing.
 2. Create `devices.toml` with the content in 3.1. The `10.0.1.107` device's ID is filled in by `discover_devices` once it is reachable.
 3. For each pattern file in a project the script is told belongs to a given device (`--device <id> <project>...`): parse the header ID and metadata block with the existing `pattern_file.py` functions, write `<stem>.sidecar.toml` with a single `deployment_history` entry, strip the metadata block, and reduce the header to name-only. Known candidates: `H26-Finale` and `test-pattern`, whose IDs were minted on the `10.0.1.107` device, so this step waits on that device's ID.
 4. For every other pattern file (older projects, unknown device): strip the metadata block and the header ID, and write **no sidecar**. They get fresh IDs on their next deploy. Reconstructing history for these is not worth a special case, and a sidecar entry with an unknown device ID is exactly the kind of complexity every future consumer would have to handle. The April `.pbb` backup was checked and does not settle membership either way, since it predates almost all of the recorded IDs.
 5. Create a `project.toml` per project in the all-defaults commented-out form from 3.2, uncommenting `pixel_map = "pixel-map.js"` for `daft26-turtle-curtain`.
-6. Update `CLAUDE.md` (root and per-project), `README.md`, delete `.env` handling, and move the device facts out of the frankensparker `CLAUDE.md` into the registry `notes`.
+6. Update the docs, specifically:
+   - Root `CLAUDE.md`: the *Pattern File Header* section (name-only header), the *Auto-Generated Metadata Block* section (replace with a description of the sidecar), the *Pattern File Naming Convention* section (prefix, optional ordinals, `projects/` paths, `.sidecar.toml` in the file tree), and the *Using PixelBlaze MCP Tools* section (the `device` / `project` parameters, and how a device is named).
+   - `README.md`: the *Setup* steps (no `.env`; `devices.toml` instead), the tool table (new tools), and *Workspace Structure*.
+   - Per-project `CLAUDE.md` files: move device facts out of the frankensparker one into the registry `notes`; fix any `project-*` path references.
+   - `.gitignore`: drop the `.env` lines once nothing reads it.
 
 Legacy `NN-name.js` filenames in `layered-acrylic` and `sound-level-meter` are a separate cleanup and not bundled with this.
 
@@ -301,3 +330,24 @@ Each phase is independently shippable and leaves the workspace working.
 3. **Pixel map deployment.** Section 5.
 4. **Controls.** Section 6, after the `set_control` merge fix.
 5. **Conveniences.** `deploy_project`, session defaults if wanted.
+
+## 10. Verification and acceptance
+
+Add `pytest` as a dev dependency and a `tests/` directory in phase 1. Keep the tests small and file-based; nothing here needs a device.
+
+Unit tests, by phase:
+
+1. **Phase 1.** `canonical_pattern_name()` for every combination of prefix (default, override, empty) and `ordinals` (`auto`, `none`, explicit ordinal present). Device-name-to-stem round trip. `resolve_device()` for each step of the chain, including the ambiguous-name error and the ad-hoc host path. Registry and manifest validation errors on a misspelled key. `list_devices` / `discover_devices` rewriting `devices.toml` with a comment on every line and asserting the comments survive byte-for-byte outside the touched keys.
+2. **Phase 2.** Sidecar round trip through `tomlkit`: create, add a second device entry, redeploy to the first (moves to front, updates in place), delete an entry; assert the top-of-file comment survives and value types (float, bool, three-float array) round-trip unchanged. Migration script on a fixture copy of a stamped pattern file: sidecar content, stripped block, name-only header, and idempotence on a second run.
+3. **Phase 3.** Map resolution order (per-pattern, project, none) and the hash comparison deciding whether to push.
+4. **Phase 4.** First-deploy seeding vs. redeploy read-back, driven by a fake `Pixelblaze` object recording the calls it received.
+
+Smoke test against `10.0.1.106`, within the constraints in section 0, at the end of each phase:
+
+- `list_devices(check=True)` reports the live ID matching the registry key and does not rewrite the file when nothing changed.
+- `create_pattern(project="test-pattern", device="PB LQ 0A4 SENSOR", ...)` with a trivial pattern lands on the device under the prefixed name, and `update_pattern` on its ID finds the local file without a `device` argument (phase 2 onward).
+- `delete_pattern` on that ID removes it from the device and leaves the sidecar as it was.
+- Point `devices.toml` at a wrong host for the entry, or a wrong ID, and confirm the refusal message names both values.
+
+Definition of done for the whole plan: `.env` is gone, no tool reads `PROJECT_FOLDER`, every project lives under `projects/`, every deployed pattern in `H26-Finale` and `test-pattern` has a sidecar whose front entry matches the device, and `TODO.md` has lost the items listed at the top of this plan.
+
