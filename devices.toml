@@ -5,13 +5,16 @@
 # touched by tooling.
 
 [devices.0x00AC00A4]
-name = "PBLQ 0A4 SENSOR"
+name = "PBLQ 0A4 H26-Barbie"
 host = "10.0.1.106"
 notes = """
 Pixelblaze v3 (pb32), firmware 3.67, **sensor board**, no output expander.
 
 - 50 px, GRB
-- Carrying a 698-char pixel map and 46 patterns (mostly Electromage examples) as of 2026-09-08
+- **The H26-Barbie controller** as of 2026-09-09. See `projects/H26-Barbie/CLAUDE.md`.
+- No pixel map: the stale one left from an earlier project was cleared by hand on
+  2026-09-09, and H26-Barbie declares none, so patterns here are 1D only.
+- Also carries ~46 Electromage example patterns and the `_TEST` project's pattern.
 """
 
 [devices.0x00AC056C]
