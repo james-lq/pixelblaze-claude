@@ -18,6 +18,35 @@ On macOS Ventura and later, each app must be explicitly granted permission to ac
 
 **Fix:** Open **System Settings → Privacy & Security → Local Network** and enable access for **Visual Studio Code**. Then restart VS Code so the MCP server process inherits the updated permission.
 
+## Device Crashes and Power Brownouts
+
+LED current draw can exceed what the supply can deliver and reset the controller. This presents as a firmware or pattern bug and is not one, so rule it out before debugging code.
+
+**Symptoms**
+
+- The device resets repeatedly: `uptime` in the device statistics never accumulates, and the status LED flashes.
+- Every strip goes dark at the same instant, including strips on different output expander channels.
+- A bad enough brownout does not present as periodic resets at all — the device stops answering entirely (`Host is down`, connection timeouts) for tens of seconds at a time. **A Pixelblaze that has vanished from the network is a power suspect, not only a WiFi suspect** — see the macOS Local Network section above for the other main cause.
+- Websocket operations that take several seconds fail mid-stream with `Connection to remote host was lost`. Preview capture is the usual casualty, since it streams ~150 frames over 6-8 seconds.
+
+**Telling it apart from a pattern bug**
+
+- `vmerr` stays `0` and `vmerrpc` stays `-1`: the VM is not faulting.
+- Free memory (`mem`) stays flat: nothing is leaking.
+- `rebootCounter` stays `0` while `uptime` keeps restarting: a hard reset, not a tracked reboot.
+- **The decisive test:** lower the global brightness and re-run the identical pattern. Nothing about the code path changes, so if the fault disappears it is power. This isolates current draw from logic in one step and is worth doing early.
+
+**Rules of thumb when designing patterns**
+
+- White is the worst case: `hsv(h, 0, 1)` drives all three colour channels at roughly 60 mA per pixel (a common rule of thumb, but actual power draw is highly dependent on specific LEDs). A pattern that is mostly white costs far more than an equally bright single-hue one.
+- Peak draw matters, not average. Effects that light many pixels at one instant — wide sweeps, simultaneous flashes, channels animating in lockstep — stack onto the same moment. Staggering channels in time spreads the load as well as usually looking better.
+- **An output expander does not reduce current draw.** It parallelises data, not power, so adding channels adds load.
+- Treat total lit pixels x brightness as a real budget, and re-check it whenever the pixel count grows.
+
+**Alternative approach for power issues: LED power injection**
+- Powering the LED strips independently from the controller can alleviate most power capacity / brownout problems.
+- Key hardware requirement for this is that multiple power sources must have their common/ground planes cleanly tied together.
+
 ## Pattern Development Workflow
 
 1. **Always call `docs_get_api_reference`** before writing new pattern code
