@@ -1,12 +1,22 @@
-"""Utilities for reading/writing PixelBlaze pattern JS files with embedded mcp metadata."""
+"""Utilities for reading/writing PixelBlaze pattern JS files with embedded mcp metadata.
+
+Naming, in both directions:
+
+    local file:    projects/H26-Finale/patterns/03 Spark Chorus.js
+    device name:   H26-Finale 03 Spark Chorus
+                   ^^^^^^^^^^ project prefix     ^^ optional ordinal
+
+The filename stem never carries the prefix — the project folder already groups
+files locally — so the invariant is `device name == "<prefix> <stem>"`, a pure
+function in both directions.
+"""
 
 import hashlib
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import PATTERNS_DIR
+from .config import PROJECTS_DIR, Project
 
 _MCP_SENTINEL = "// ---- pixelblaze-mcp metadata----"
 
@@ -74,7 +84,7 @@ def stamp_file(path: Path, code: str, pattern_id: str, deployed_at: str | None) 
         f"// @modified-since-deployed: false\n"
     )
 
-    PATTERNS_DIR.mkdir(exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body + mcp_block, encoding="utf-8")
 
 
@@ -136,13 +146,22 @@ def parse_pattern_file(path: Path) -> dict[str, Any]:
     }
 
 
+
 def find_local_pattern_file(pattern_id: str) -> Path | None:
-    """Scan the patterns directory (PATTERNS_DIR) for a JS file containing the given Pattern ID."""
-    if not PATTERNS_DIR.exists():
+    """Find the JS file carrying a given Pattern ID, across every project.
+
+    Phase 1 of plan 01 keeps the ID in the file's header line, so this greps
+    `projects/*/patterns/*.js`. It is cheap (a few dozen small files) and
+    unambiguous: IDs are 17 random characters minted per device, so collisions
+    do not happen in practice. Phase 2 replaces this with the same scan over
+    `*.sidecar.toml`, which is the same shape with the ID in a different file.
+    """
+    if not PROJECTS_DIR.exists():
         return None
-    for path in PATTERNS_DIR.glob("*.js"):
+    needle = f"Pattern ID: {pattern_id}"
+    for path in sorted(PROJECTS_DIR.glob("*/patterns/*.js")):
         try:
-            if f"Pattern ID: {pattern_id}" in path.read_text(encoding="utf-8"):
+            if needle in path.read_text(encoding="utf-8"):
                 return path
         except OSError:
             continue
@@ -158,38 +177,69 @@ def _safe_filename(name: str) -> str:
     return _ILLEGAL_FILENAME_CHARS.sub("-", name).strip().rstrip(".")
 
 
-def _next_ordinal() -> int:
-    """Next 2-digit ordinal, counting both `NN Name.js` and legacy `NN-name.js` files."""
-    if not PATTERNS_DIR.exists():
+def _next_ordinal(project: Project) -> int:
+    """Next 2-digit ordinal for a project, counting both `NN Name.js` and
+    legacy `NN-name.js` files."""
+    patterns_dir = project.patterns_dir
+    if not patterns_dir.exists():
         return 1
     max_ord = 0
-    for f in PATTERNS_DIR.glob("*.js"):
+    for f in patterns_dir.glob("*.js"):
         m = _ORDINAL_PREFIX_RE.match(f.name)
         if m:
             max_ord = max(max_ord, int(m.group(1)))
     return max_ord + 1
 
 
-def canonical_pattern_name(name: str) -> str:
-    """Display name following the `NN Name With Spaces` convention: filename-safe,
-    prefixed with the next ordinal unless the name already starts with one.
-    The device display name and the local filename stem are always identical."""
+def canonical_pattern_name(name: str, project: Project) -> str:
+    """The filename stem for a pattern: filename-safe, and prefixed with the
+    next free ordinal when the project asks for ordinals and the name lacks one.
+
+    This is the *local* name. It never carries the project's device-name prefix;
+    `device_pattern_name()` adds that on the way to the device.
+    """
     base = _safe_filename(name)
-    if not _ORDINAL_PREFIX_RE.match(base):
-        base = f"{_next_ordinal():02d} {base}"
+    if project.ordinals == "auto" and not _ORDINAL_PREFIX_RE.match(base):
+        base = f"{_next_ordinal(project):02d} {base}"
     return base
 
 
-def new_pattern_file_path(name: str) -> Path:
-    """File path in PATTERNS_DIR for a pattern: `<canonical name>.js`."""
-    return PATTERNS_DIR / f"{canonical_pattern_name(name)}.js"
+def device_pattern_name(stem: str, project: Project) -> str:
+    """The display name a pattern takes on the device: `<prefix> <stem>`.
+
+    An empty `pattern_name_prefix` means the pattern deploys under its bare
+    filename stem.
+    """
+    prefix = project.pattern_name_prefix
+    return f"{prefix} {stem}" if prefix else stem
+
+
+def stem_from_device_name(device_name: str, project: Project) -> str | None:
+    """The filename stem a device pattern name maps back to, or None if the
+    name does not belong to this project.
+
+    A pattern whose name does not carry the project's prefix is not ours —
+    the right answer for hand-made or downloaded patterns sharing the device.
+    """
+    prefix = project.pattern_name_prefix
+    if not prefix:
+        return device_name
+    if device_name.startswith(prefix + " "):
+        return device_name[len(prefix) + 1:]
+    return None
+
+
+def new_pattern_file_path(stem: str, project: Project) -> Path:
+    """Where a new pattern's JS file goes: `<project>/patterns/<stem>.js`."""
+    return project.patterns_dir / f"{stem}.js"
 
 
 def ensure_header(code: str, name: str, pattern_id: str = "(pending)") -> str:
     """Prepend the `// <Name> — Pattern ID: <id>` header line if the code lacks one.
 
-    The tooling locates a pattern's local file by this line, so code saved
-    without it cannot be matched on later updates.
+    `name` is the local filename stem, not the device display name: the header
+    identifies the local file, and phase 1 of plan 01 still locates a pattern's
+    file by grepping this line for its ID.
     """
     if _PATTERN_ID_RE.search(code):
         return code

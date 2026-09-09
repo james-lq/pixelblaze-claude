@@ -1,6 +1,6 @@
 # Plan 01 — Multi-device, multi-project workflow improvements
 
-Status: **draft 4, for iteration**. Nothing here is implemented yet. Open questions are collected in section 8; decisions get folded back into the relevant section once made.
+Status: Nothing here is implemented yet. Open questions are collected in section 8; decisions get folded back into the relevant section once made.
 
 Related open items in the root `TODO.md`: *Device configuration* (both items), *Pattern naming and metadata* (both items), and the *Controls and deployment* sidecar item. This plan absorbs those; the *Code sharing* and *MCP tooling* sections stay in `TODO.md` but are referenced where they constrain the design.
 

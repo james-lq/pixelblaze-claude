@@ -1,0 +1,27 @@
+# Pixelblaze device registry. Table keys are the hardware chip ID (from getConfig's
+# `chipId`, and the same value the UDP discovery beacon sends), written as `0x`
+# followed by 8 upper-case hex digits. `name` and `host` are refreshed by the
+# tooling. `notes` is yours: a multi-line string, Markdown by convention, never
+# touched by tooling.
+
+[devices.0x00AC00A4]
+name = "PBLQ 0A4 SENSOR"
+host = "10.0.1.106"
+notes = """
+Pixelblaze v3 (pb32), firmware 3.67, **sensor board**, no output expander.
+
+- 50 px, GRB
+- Carrying a 698-char pixel map and 46 patterns (mostly Electromage examples) as of 2026-09-08
+"""
+
+[devices.0x00AC056C]
+name = "PB LQ 56C SENSOR"
+host = "10.0.1.107"
+notes = """
+Pixelblaze v3 (pb32), firmware 3.67, **sensor board**, with an **output expander**.
+
+- 500 px across 2 expander channels, 250 px each, one physical strip per channel
+- Strips share one continuous index space, seam at index 250; no reversing or mirroring
+- The **H26-Finale** rig. See `projects/H26-Finale/CLAUDE.md` for layout and the
+  brownout ceiling measured 2026-09-07.
+"""

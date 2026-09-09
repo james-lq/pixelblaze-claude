@@ -1,18 +1,38 @@
-"""MCP tools for interacting with the PixelBlaze device."""
+"""MCP tools for interacting with PixelBlaze devices.
+
+Every tool that touches hardware takes a `device`: a chip ID from `devices.toml`,
+a device's display name, or a bare IP address for a one-off. Tools that work on
+local files take a `project` (a folder name under `projects/`) or a `file_path`,
+which implies its project.
+
+Phase 1 of plan 01: `device` has no fallback yet, because the pattern sidecar
+that records where a pattern last went arrives in phase 2. Until then, omitting
+it is an error that lists the registered devices.
+"""
 
 import json
 import logging
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pixelblaze import Pixelblaze
 
-from .config import PATTERNS_DIR, PIXELBLAZE_HOST, is_offline, preview_capture_enabled, set_offline
-from .preview import capture_preview, placeholder_preview
+from .config import (
+    Project,
+    is_offline,
+    list_projects,
+    load_project,
+    project_for_path,
+    resolve_device,
+    resolve_path,
+)
+from .device import OFFLINE_MSG, connect, connect_resolved, describe, read_config
+from .preview import capture_preview as capture_preview_image
+from .preview import placeholder_preview
 from .pattern_file import (
     canonical_pattern_name,
+    device_pattern_name,
     ensure_header,
     find_local_pattern_file,
     new_pattern_file_path,
@@ -23,28 +43,17 @@ from .pattern_file import (
 
 logger = logging.getLogger(__name__)
 
-_OFFLINE_MSG = (
-    "PixelBlaze offline mode is active — no connection to the device will be made. "
-    "To go online, call pixelblaze_set_offline_mode(enabled=False). "
-    "Documentation tools (docs_get_api_reference, docs_get_mapper_reference) "
-    "and local pattern file tools remain available."
-)
-
 
 def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-@contextmanager
-def _pb():
-    """Context manager that yields a connected Pixelblaze instance."""
-    if is_offline():
-        raise RuntimeError(_OFFLINE_MSG)
-    pb = Pixelblaze(PIXELBLAZE_HOST)
-    try:
-        yield pb
-    finally:
-        pb._close()
+def _wants_preview(project: Project | None, override: bool | None) -> bool:
+    """Whether to capture a live thumbnail: per-call argument wins, else the
+    project manifest's `preview_capture`, else on."""
+    if override is not None:
+        return override
+    return project.preview_capture if project else True
 
 
 def _unwrap_source(raw: Any) -> str:
@@ -62,7 +71,13 @@ def _unwrap_source(raw: Any) -> str:
 
 
 def _save_pattern(
-    pb: Pixelblaze, *, code: str, name: str, pattern_id: str | None = None, activate: bool = False
+    pb: Pixelblaze,
+    *,
+    code: str,
+    name: str,
+    pattern_id: str | None = None,
+    activate: bool = False,
+    capture: bool = True,
 ) -> str:
     """Save a pattern (new when pattern_id is None) with a proper thumbnail.
 
@@ -91,13 +106,13 @@ def _save_pattern(
         pb.setActivePattern(pattern_id)
         running = pattern_id
 
-    if not preview_capture_enabled():
+    if not capture:
         return pattern_id
 
     if running != pattern_id:
         pb.setActivePattern(pattern_id)
     try:
-        preview = capture_preview(pb)
+        preview = capture_preview_image(pb)
     except Exception as e:  # keep the placeholder rather than fail the save
         logger.warning("Preview capture failed for %s; keeping placeholder: %s", pattern_id, e)
         preview = None
@@ -108,12 +123,15 @@ def _save_pattern(
     return pattern_id
 
 
+# --- Offline mode ---------------------------------------------------------
+
+
 def pixelblaze_set_offline_mode(enabled: bool) -> str:
     """Enable or disable PixelBlaze offline mode.
 
     When enabled, all device tools are disabled and will not attempt to connect
     to the hardware. Documentation tools and local pattern file operations remain
-    available. Use this when the PixelBlaze device is not reachable.
+    available. Use this when no PixelBlaze device is reachable.
 
     Phrases like "go offline", "toggle pb offline", "enable offline mode", or
     "go online" should all map to this tool.
@@ -121,100 +139,243 @@ def pixelblaze_set_offline_mode(enabled: bool) -> str:
     Args:
         enabled: True to enable offline mode, False to go back online.
     """
+    from .config import set_offline
+
     set_offline(enabled)
     if enabled:
         return (
             "PixelBlaze offline mode enabled. Device tools are disabled. "
             "You can still use docs_get_api_reference and docs_get_mapper_reference. "
             "Patterns created with pixelblaze_create_pattern will be saved locally "
-            "locally and can be deployed later with pixelblaze_deploy_local_pattern."
+            "and can be deployed later with pixelblaze_deploy_local_pattern."
         )
-    return (
-        f"PixelBlaze offline mode disabled. Device tools will connect to {PIXELBLAZE_HOST} on next use."
-    )
+    return "PixelBlaze offline mode disabled. Device tools will connect on next use."
 
 
-def pixelblaze_list_local_patterns() -> list[dict[str, Any]]:
-    """List all PixelBlaze pattern JS files in the local patterns directory (PATTERNS_DIR).
-
-    Returns deploy status for each file: whether it has been deployed, when it
-    was last deployed, and whether the local file has been modified since the
-    last deploy. Useful for identifying patterns that need to be deployed or
-    re-deployed to the device.
-    """
-    if not PATTERNS_DIR.exists():
-        return []
-    results = []
-    for path in sorted(PATTERNS_DIR.glob("*.js")):
-        try:
-            info = parse_pattern_file(path)
-            results.append({
-                "file": path.name,
-                "name": info["name"],
-                "pattern_id": info["pattern_id"] or "(none)",
-                "deployed_at": info["deployed_at"] or "(never)",
-                "modified_since_deployed": info["modified_since_deployed"],
-            })
-        except Exception as e:
-            results.append({"file": path.name, "error": str(e)})
-    return results
+# --- Devices --------------------------------------------------------------
 
 
-def pixelblaze_deploy_local_pattern(file_path: str) -> dict[str, str]:
-    """Deploy a locally saved pattern JS file to the PixelBlaze device.
+def pixelblaze_list_devices(check: bool = False) -> dict[str, Any]:
+    """List the PixelBlaze devices registered in devices.toml.
 
-    Reads code from the file, creates or updates the pattern on the device,
-    then stamps the file with the deployment timestamp and hash. Use this to
-    deploy patterns created or edited in offline mode.
+    Each entry is keyed by the device's immutable hardware chip ID, written as
+    `0x` plus 8 upper-case hex digits.
 
     Args:
-        file_path: Path to the pattern JS file (absolute, or relative to
-            the project root).
+        check: Connect to each device and report its live chip ID, name, board,
+            firmware, pixel count and expander channels alongside the registry
+            values. Flags any chip ID mismatch, and refreshes the stored `name`
+            and `host` in devices.toml when they have drifted. Without this,
+            the file is only read, never written.
+
+    Returns a dict with the registered devices and, when check=True, what each
+    one actually reported.
     """
-    path = Path(file_path)
-    if not path.is_absolute():
-        # Resolve relative paths from the workspace root
-        path = PATTERNS_DIR.parent.parent / path
+    from .config import load_devices
+
+    registry = load_devices()
+    entries: list[dict[str, Any]] = []
+    for chip_id, dev in registry.devices.items():
+        entry: dict[str, Any] = {"chip_id": chip_id, "name": dev.name, "host": dev.host}
+        if dev.notes:
+            entry["notes"] = dev.notes
+        entries.append(entry)
+
+    if not check:
+        return {"file": str(registry.path), "devices": entries}
+
+    changed = False
+    for entry in entries:
+        dev = registry.devices[entry["chip_id"]]
+        try:
+            with connect_resolved(dev) as pb:
+                live = describe(read_config(pb))
+        except Exception as e:
+            entry["status"] = "unreachable"
+            entry["error"] = str(e)
+            continue
+        entry["status"] = "ok"
+        entry["live"] = live
+        # The chip ID cannot have drifted — connect_resolved refuses on mismatch —
+        # but name and host are hints, and hints go stale.
+        if live["name"] and live["name"] != dev.name:
+            entry["name_was"] = dev.name
+            entry["name"] = live["name"]
+        if registry.set_fields(entry["chip_id"], name=live["name"], host=dev.host):
+            changed = True
+
+    if changed:
+        registry.save()
+    return {"file": str(registry.path), "devices": entries, "registry_updated": changed}
+
+
+def pixelblaze_discover_devices(dry_run: bool = False) -> dict[str, Any]:
+    """Find PixelBlaze devices on the local network and add new ones to devices.toml.
+
+    Listens for the UDP discovery beacons every PixelBlaze broadcasts, connects
+    to each address found to read its chip ID and name, and adds any device not
+    already registered. Existing entries have their `name` and `host` refreshed;
+    hand-written `notes` are never touched.
+
+    Args:
+        dry_run: Report what would be added or changed without writing the file.
+
+    Returns the devices found, and what was added or refreshed.
+    """
+    from .config import load_devices
+    from .discovery import listen_for_beacons
+
+    found = listen_for_beacons()
+    registry = load_devices()
+    results: list[dict[str, Any]] = []
+    changed = False
+
+    for host in sorted(found):
+        try:
+            pb = Pixelblaze(host)
+            try:
+                config = read_config(pb)
+            finally:
+                pb._close()
+            live = describe(config)
+        except Exception as e:
+            results.append({"host": host, "status": "unreachable", "error": str(e)})
+            continue
+
+        chip_id = live["chip_id"]
+        known = registry.devices.get(chip_id)
+        if known is None:
+            action = "would add" if dry_run else "added"
+        elif known.name != live["name"] or known.host != host:
+            action = "would refresh" if dry_run else "refreshed"
+        else:
+            action = "unchanged"
+        results.append(
+            {"host": host, "chip_id": chip_id, "name": live["name"], "action": action, **live}
+        )
+        if not dry_run and action != "unchanged":
+            if registry.set_fields(chip_id, name=live["name"], host=host):
+                changed = True
+
+    if changed:
+        registry.save()
+    return {
+        "file": str(registry.path),
+        "found": len(found),
+        "devices": results,
+        "registry_updated": changed,
+        "dry_run": dry_run,
+    }
+
+
+# --- Local pattern files --------------------------------------------------
+
+
+def pixelblaze_list_local_patterns(project: str | None = None) -> dict[str, Any]:
+    """List local PixelBlaze pattern JS files and their deploy status.
+
+    Reports, per file, whether it has been deployed, when, and whether the local
+    file has been modified since. Useful for spotting patterns that need
+    deploying or re-deploying.
+
+    Args:
+        project: A project folder name under `projects/`. Omit to list every
+            project, grouped by project.
+    """
+    names = [project] if project else list_projects()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for name in names:
+        proj = load_project(name)
+        rows: list[dict[str, Any]] = []
+        if proj.patterns_dir.exists():
+            for path in sorted(proj.patterns_dir.glob("*.js")):
+                try:
+                    info = parse_pattern_file(path)
+                    rows.append({
+                        "file": path.name,
+                        "name": info["name"],
+                        "device_name": device_pattern_name(path.stem, proj),
+                        "pattern_id": info["pattern_id"] or "(none)",
+                        "deployed_at": info["deployed_at"] or "(never)",
+                        "modified_since_deployed": info["modified_since_deployed"],
+                    })
+                except Exception as e:
+                    rows.append({"file": path.name, "error": str(e)})
+        grouped[name] = rows
+    return {"projects": grouped}
+
+
+def pixelblaze_deploy_local_pattern(
+    file_path: str, device: str, capture_preview: bool | None = None
+) -> dict[str, str]:
+    """Deploy a locally saved pattern JS file to a PixelBlaze device.
+
+    Reads code from the file, creates or updates the pattern on the device, then
+    stamps the file with the deployment timestamp and hash. Use this to deploy
+    patterns created or edited in offline mode.
+
+    Args:
+        file_path: Path to the pattern JS file (absolute, or relative to the
+            workspace root — the folder holding devices.toml).
+        device: Which PixelBlaze to deploy to: a chip ID, a registered display
+            name, or an IP address.
+        capture_preview: Override the project's `preview_capture` setting for
+            this call. False skips the ~6 s live thumbnail capture.
+    """
+    path = resolve_path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Pattern file not found: {file_path}")
 
+    project = project_for_path(path)
     info = parse_pattern_file(path)
     code = info["code"]
-    name = info["name"]
     existing_id = info["pattern_id"]
+    # The local filename stem is the source of truth for the name, so renaming a
+    # file locally propagates to the device on redeploy.
+    name = device_pattern_name(path.stem, project)
 
-    with _pb() as pb:
-        if existing_id and existing_id != "(pending)":
-            # The local header name is the source of truth, so renaming a
-            # pattern locally propagates to the device on redeploy.
-            pattern_id = _save_pattern(pb, code=code, name=name, pattern_id=existing_id)
-        else:
-            pattern_id = _save_pattern(pb, code=code, name=name, activate=True)
+    with connect(device, project=project) as pb:
+        pattern_id = _save_pattern(
+            pb,
+            code=code,
+            name=name,
+            pattern_id=existing_id if existing_id and existing_id != "(pending)" else None,
+            activate=not existing_id or existing_id == "(pending)",
+            capture=_wants_preview(project, capture_preview),
+        )
 
     stamp_file(path, code, pattern_id, _now_utc())
-    return {"id": pattern_id, "name": name, "file": path.name}
+    return {"id": pattern_id, "name": name, "file": path.name, "project": project.name}
 
 
-def pixelblaze_list_patterns() -> list[dict[str, str]]:
-    """List all patterns stored on the PixelBlaze device.
+# --- Device patterns ------------------------------------------------------
+
+
+def pixelblaze_list_patterns(device: str) -> list[dict[str, str]]:
+    """List all patterns stored on a PixelBlaze device.
+
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a list of dicts with 'id' and 'name' keys.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         patterns = pb.getPatternList()
         return [{"id": pid, "name": name} for pid, name in patterns.items()]
 
 
-def pixelblaze_get_active_pattern() -> dict[str, str]:
-    """Get the currently active (running) pattern on the PixelBlaze.
+def pixelblaze_get_active_pattern(device: str) -> dict[str, str]:
+    """Get the currently active (running) pattern on a PixelBlaze.
+
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a dict with 'id' and 'name' of the active pattern.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         active = pb.getActivePattern()
         if active is None:
             return {"id": "", "name": "(none)"}
-        # TODO JLOM REVIEW: Claude fixed this apparent incompatibility... did PB firmware change?
         # Library may return a plain ID string or a dict like {id: name}
         if isinstance(active, str):
             pid = active
@@ -225,24 +386,27 @@ def pixelblaze_get_active_pattern() -> dict[str, str]:
         return {"id": pid, "name": name}
 
 
-def pixelblaze_set_active_pattern(pattern_id: str) -> str:
-    """Switch the PixelBlaze to run a specific pattern by its ID.
+def pixelblaze_set_active_pattern(pattern_id: str, device: str) -> str:
+    """Switch a PixelBlaze to run a specific pattern by its ID.
 
     Args:
         pattern_id: The pattern ID to activate (from pixelblaze_list_patterns).
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a confirmation message.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         pb.setActivePattern(pattern_id)
         return f"Activated pattern {pattern_id}"
 
 
-def pixelblaze_get_pattern_code(pattern_id: str) -> str:
+def pixelblaze_get_pattern_code(pattern_id: str, device: str | None = None) -> str:
     """Get the JavaScript source code of a pattern.
 
     Args:
         pattern_id: The pattern ID to retrieve code for.
+        device: Which PixelBlaze to read from. Not needed in offline mode, where
+            the local file for this ID is used instead.
 
     Returns the JavaScript source code string.
     """
@@ -251,198 +415,270 @@ def pixelblaze_get_pattern_code(pattern_id: str) -> str:
         if local:
             return parse_pattern_file(local)["code"]
         raise RuntimeError(
-            f"{_OFFLINE_MSG}\n\n"
+            f"{OFFLINE_MSG}\n\n"
             f"No local file found for pattern ID '{pattern_id}'. "
-            "Check the local patterns directory — the Pattern ID appears in the first comment "
-            "line of each JS file. You can also read the file directly."
+            "Check the projects' patterns folders — the Pattern ID appears in the first "
+            "comment line of each JS file. You can also read the file directly."
         )
-    with _pb() as pb:
+    with connect(device) as pb:
         raw = pb.getPatternSourceCode(pattern_id)
         if raw is None:
             return f"No source code found for pattern {pattern_id}"
         return _unwrap_source(raw)
 
 
-def pixelblaze_create_pattern(name: str, code: str) -> dict[str, str]:
-    """Create a new pattern on the PixelBlaze with the given JavaScript code,
-    then activate it. Also saves the code to a local JS file in the patterns directory.
+def pixelblaze_create_pattern(
+    name: str,
+    code: str,
+    project: str,
+    device: str | None = None,
+    capture_preview: bool | None = None,
+) -> dict[str, str]:
+    """Create a new pattern on a PixelBlaze and activate it, saving a local copy
+    in the project's patterns folder.
 
     In offline mode, saves the pattern locally as a pending file without
-    deploying to the device. Use pixelblaze_deploy_local_pattern to deploy later.
+    deploying. Use pixelblaze_deploy_local_pattern to deploy it later.
 
     Args:
-        name: Display name for the new pattern. If it does not start with a
-            2-digit ordinal (e.g. "03 "), the next free ordinal is prepended
-            to both the device name and the local filename.
+        name: Display name for the new pattern. If the project uses ordinals and
+            the name does not start with a 2-digit one (e.g. "03 "), the next
+            free ordinal is prepended. The project's `pattern_name_prefix` is
+            added to the device's display name but never to the local filename.
         code: PixelBlaze JavaScript source code (must define a render(index) function).
+        project: The project folder name under `projects/` this pattern belongs to.
+        device: Which PixelBlaze to deploy to. Required unless offline.
+        capture_preview: Override the project's `preview_capture` setting for
+            this call. False skips the ~6 s live thumbnail capture.
 
-    Returns a dict with the new pattern's 'id' and 'name'.
+    Returns a dict with the new pattern's 'id', local 'name' and device name.
     """
-    # Display name and filename stem are always identical, ordinal included.
-    name = canonical_pattern_name(name)
-    code = ensure_header(code, name)
+    proj = load_project(project)
+    # The filename stem, ordinal included. The device name adds the prefix.
+    stem = canonical_pattern_name(name, proj)
+    display_name = device_pattern_name(stem, proj)
+    code = ensure_header(code, stem)
+
     if is_offline():
-        path = new_pattern_file_path(name)
+        path = new_pattern_file_path(stem, proj)
         stamp_file(path, code, "(pending)", None)
         return {
             "id": "(pending)",
-            "name": name,
+            "name": stem,
+            "device_name": display_name,
+            "project": proj.name,
             "status": "offline — not deployed",
             "file": str(path),
             "message": (
-                f"Offline mode: pattern saved to {path.name} but not deployed to the device. "
-                f"Call pixelblaze_deploy_local_pattern('{path}') when the device is reachable."
+                f"Offline mode: pattern saved to {path.name} but not deployed. "
+                f"Call pixelblaze_deploy_local_pattern('{path}', device=...) when a "
+                "device is reachable."
             ),
         }
 
-    with _pb() as pb:
-        pattern_id = _save_pattern(pb, code=code, name=name, activate=True)
+    with connect(device, project=proj) as pb:
+        pattern_id = _save_pattern(
+            pb,
+            code=code,
+            name=display_name,
+            activate=True,
+            capture=_wants_preview(proj, capture_preview),
+        )
 
-    path = find_local_pattern_file(pattern_id) or new_pattern_file_path(name)
+    path = find_local_pattern_file(pattern_id) or new_pattern_file_path(stem, proj)
     stamp_file(path, code, pattern_id, _now_utc())
-    return {"id": pattern_id, "name": name, "file": path.name}
+    return {
+        "id": pattern_id,
+        "name": stem,
+        "device_name": display_name,
+        "project": proj.name,
+        "file": path.name,
+    }
 
 
-def pixelblaze_update_pattern(pattern_id: str, code: str) -> str:
-    """Replace the JavaScript source code of an existing pattern.
-    Also updates the local pattern JS file if one exists for this ID.
+def pixelblaze_update_pattern(
+    pattern_id: str, code: str, device: str | None = None, capture_preview: bool | None = None
+) -> str:
+    """Replace the JavaScript source code of an existing pattern, updating the
+    local pattern JS file too.
 
-    In offline mode, updates the local file only — the device is not contacted.
-    The local file will be marked as modified-since-deployed so it shows up in
-    pixelblaze_list_local_patterns as needing re-deployment.
+    In offline mode, updates the local file only. It is then marked as
+    modified-since-deployed, so it shows up in pixelblaze_list_local_patterns
+    as needing re-deployment.
 
     Args:
         pattern_id: The ID of the pattern to update.
         code: New PixelBlaze JavaScript source code.
+        device: Which PixelBlaze holds this pattern. Required unless offline.
+        capture_preview: Override the project's `preview_capture` setting for
+            this call. False skips the ~6 s live thumbnail capture.
 
     Returns a confirmation message.
     """
     local_path = find_local_pattern_file(pattern_id)
+    project = project_for_path(local_path) if local_path else None
 
     if is_offline():
         if local_path is None:
             raise RuntimeError(
-                f"{_OFFLINE_MSG}\n\n"
+                f"{OFFLINE_MSG}\n\n"
                 f"No local file found for pattern ID '{pattern_id}'. "
                 "Cannot update without either a device connection or a local copy. "
-                "Check the local patterns directory for JS files — the Pattern ID is in the first comment line."
+                "Check the projects' patterns folders — the Pattern ID is in the first "
+                "comment line of each JS file."
             )
-        update_local_code(local_path, code)
+        update_local_code(local_path, ensure_header(code, local_path.stem, pattern_id))
         return (
             f"Offline mode: updated local file {local_path.name} with new code. "
             "The device has not been updated. "
-            f"Call pixelblaze_deploy_local_pattern('{local_path}') to deploy when online."
+            f"Call pixelblaze_deploy_local_pattern('{local_path}', device=...) to deploy."
         )
 
-    with _pb() as pb:
+    with connect(device, project=project) as pb:
         patterns = pb.getPatternList()
         name = patterns.get(pattern_id, pattern_id)
-        _save_pattern(pb, code=code, name=name, pattern_id=pattern_id)
+        # Re-add the header if the incoming code lacks one. Phase 1 locates a
+        # pattern's local file by grepping that line for its ID, so writing
+        # header-less code straight through would orphan the file from its ID.
+        code = ensure_header(code, local_path.stem if local_path else name, pattern_id)
+        _save_pattern(
+            pb,
+            code=code,
+            name=name,
+            pattern_id=pattern_id,
+            capture=_wants_preview(project, capture_preview),
+        )
 
     if local_path is None:
-        local_path = new_pattern_file_path(name)
+        # An unknown pattern needs a project to land in; without one, the device
+        # was updated but nothing local was written.
+        return (
+            f"Updated pattern '{name}' ({pattern_id}) on the device. No local file carries "
+            "this ID, so nothing was saved locally. Use pixelblaze_create_pattern with a "
+            "`project` to keep a local copy."
+        )
     stamp_file(local_path, code, pattern_id, _now_utc())
     return f"Updated pattern '{name}' ({pattern_id}) — stamped {local_path.name}"
 
 
-def pixelblaze_delete_pattern(pattern_id: str) -> str:
-    """Delete a pattern from the PixelBlaze device.
+def pixelblaze_delete_pattern(pattern_id: str, device: str) -> str:
+    """Delete a pattern from a PixelBlaze device.
+
+    Removes it from the device only; no local file is ever deleted.
 
     Args:
         pattern_id: The ID of the pattern to delete.
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a confirmation message.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         pb.deletePattern(pattern_id)
         return f"Deleted pattern {pattern_id}"
 
 
-def pixelblaze_get_controls() -> list[dict[str, Any]]:
-    """Get the UI controls for the currently active pattern.
+# --- Controls and device state -------------------------------------------
 
-    Returns a list of control dicts, each with 'name', 'value', and 'type' keys.
-    The controls correspond to exported slider/toggle/picker variables in the pattern code.
+
+def pixelblaze_get_controls(device: str) -> list[dict[str, Any]]:
+    """Get the UI controls for the currently active pattern on a device.
+
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
+
+    Returns a list of control dicts, each with 'name' and 'value'. The controls
+    correspond to exported slider/toggle/picker variables in the pattern code.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         # getActiveControls() returns the live control values for the running
         # pattern as a flat {name: value} dict. (getPatternControls(id) only
-        # returns values that have been saved to flash, so freshly created
-        # patterns and unsaved slider changes would appear empty.)
+        # returns values saved to flash, so freshly created patterns and unsaved
+        # slider changes would appear empty.)
         controls = pb.getActiveControls() or {}
         return [{"name": k, "value": v} for k, v in controls.items()]
 
 
-def pixelblaze_set_control(name: str, value: float) -> str:
-    """Set the value of a UI control (slider, toggle, etc.) on the active pattern.
+def pixelblaze_set_control(
+    name: str, value: float | bool | list[float], device: str
+) -> str:
+    """Set the value of a UI control on the active pattern.
 
     Args:
         name: The control variable name (as it appears in pixelblaze_get_controls).
-        value: Numeric value (sliders: 0.0–1.0; toggles: 0 or 1).
+        value: A number for a slider (0.0-1.0), a boolean for a toggle, or a list
+            of three floats for a colour picker — matching what the device stores.
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a confirmation message.
     """
-    with _pb() as pb:
+    if isinstance(value, list) and len(value) != 3:
+        raise ValueError(
+            f"A list control value must have exactly 3 elements (a colour picker's "
+            f"h, s, v); got {len(value)}."
+        )
+    with connect(device) as pb:
         # The client exposes setActiveControls(dict); there is no setControl().
         pb.setActiveControls({name: value})
         return f"Set control '{name}' to {value}"
 
 
-def pixelblaze_regenerate_preview(pattern_id: str) -> str:
-    """Regenerate the pattern-list thumbnail for a pattern already on the device.
+def pixelblaze_regenerate_preview(pattern_id: str, device: str) -> str:
+    """Regenerate the pattern-list thumbnail for a pattern already on a device.
 
-    Captures a live preview from the pattern (activating it temporarily if it
-    is not the running pattern) and re-saves the pattern with that thumbnail.
-    Use this to backfill patterns saved without a preview image, which make
-    the web UI's pattern list stall and show the "trouble loading preview
-    images" dialog.
+    Captures a live preview from the pattern (activating it temporarily if it is
+    not the running one) and re-saves the pattern with that thumbnail. Use this
+    to backfill patterns saved without a preview image, which make the web UI's
+    pattern list stall and show the "trouble loading preview images" dialog.
 
     Args:
         pattern_id: The ID of the pattern (from pixelblaze_list_patterns).
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a confirmation message.
     """
-    with _pb() as pb:
+    with connect(device) as pb:
         patterns = pb.getPatternList()
         if pattern_id not in patterns:
             raise ValueError(f"No pattern with ID '{pattern_id}' on the device")
         name = patterns[pattern_id]
         code = _unwrap_source(pb.getPatternSourceCode(pattern_id))
-        _save_pattern(pb, code=code, name=name, pattern_id=pattern_id)
+        _save_pattern(pb, code=code, name=name, pattern_id=pattern_id, capture=True)
     return f"Regenerated preview for '{name}' ({pattern_id})"
 
 
-def pixelblaze_get_device_info() -> dict[str, Any]:
-    """Get hardware and runtime information about the PixelBlaze device.
+def pixelblaze_get_device_info(device: str) -> dict[str, Any]:
+    """Get hardware and runtime information about a PixelBlaze device.
 
-    Returns a dict with keys: host, pixel_count, fps, uptime_s,
-    version_major, version_minor.
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
+
+    Returns a dict with the device's identity, hardware config, and runtime stats.
     """
-    with _pb() as pb:
+    resolved = resolve_device(device)
+    with connect_resolved(resolved) as pb:
+        info: dict[str, Any] = {"host": resolved.host, **describe(read_config(pb))}
         stats = pb.getStatistics()
-        info: dict[str, Any] = {
-            "host": PIXELBLAZE_HOST,
-            # pixelCount lives in config settings, not the stats packet.
-            "pixel_count": pb.getPixelCount(),
+        info.update({
             "fps": pb.getFPS(),
             "uptime_s": pb.getUptime(),
             "version_major": pb.getVersionMajor(),
             "version_minor": pb.getVersionMinor(),
-        }
+        })
         if stats:
             info["render_ms"] = stats.get("renderMs")
         return info
 
 
-def pixelblaze_set_brightness(value: float) -> str:
-    """Set the global brightness of the PixelBlaze.
+def pixelblaze_set_brightness(value: float, device: str) -> str:
+    """Set the global brightness of a PixelBlaze.
 
     Args:
         value: Brightness level from 0.0 (off) to 1.0 (full brightness).
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
 
     Returns a confirmation message.
     """
     value = max(0.0, min(1.0, value))
-    with _pb() as pb:
+    with connect(device) as pb:
         pb.setBrightnessSlider(value)
         return f"Set brightness to {value:.2f}"

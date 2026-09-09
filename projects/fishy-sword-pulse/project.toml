@@ -1,0 +1,17 @@
+# Prefix for the on-device display name so a project's patterns group together
+# in the Pixelblaze pattern list. Local filenames never carry it. Defaults to the
+# project folder name; set to "" to deploy patterns under their bare filenames.
+#pattern_name_prefix = "fishy-sword-pulse"
+
+# "auto" prepends the next free two-digit ordinal (`NN `) to a new pattern's name
+# when it lacks one, which makes the web UI's alphabetical sort useful.
+# "none" leaves names alone. An explicit ordinal in a name is always kept.
+#ordinals = "auto"
+
+# Project-level pixel map, relative to this folder, pushed to the device on deploy
+# when it differs from what is there. A per-pattern `<stem>.mapper.js` overrides it.
+#pixel_map = "pixel-map.js"
+
+# Capture a live thumbnail on every save (adds 6-8 s). Per-call `capture_preview`
+# overrides this.
+#preview_capture = true
