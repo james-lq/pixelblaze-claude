@@ -32,6 +32,8 @@ Every connection to a registered device checks that the box answering at that ad
 
 Tools that create or list local files take a `project` — the folder name under `projects/` — or a `file_path`, which implies its project. `project.toml` in each folder sets that project's device-name prefix, ordinal policy, pixel map and preview-capture default; every key has a default, so the file can be absent entirely.
 
+`pixelblaze_deploy_project` moves a whole project to one device in a single call. It skips patterns the device already has unchanged, so it is cheap to re-run; pass `only_modified=False` to force every pattern, which is what a changed `pattern_name_prefix` needs in order to rename them all on the device.
+
 ## macOS: Local Network Access
 
 On macOS Ventura and later, each app must be explicitly granted permission to access local network devices. If the PixelBlaze is unreachable from VS Code or the terminal (connection refused, no route to host, or similar) but is accessible from a browser, this permission is the most likely cause.

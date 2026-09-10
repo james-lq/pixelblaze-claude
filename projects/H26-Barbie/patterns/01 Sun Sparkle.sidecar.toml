@@ -5,7 +5,7 @@
 device_id = "0x00AC00A4"
 device_name = "PBLQ 0A4 H26-Barbie" # display name at deploy time; a hint, not used for matching
 pattern_id = "tB3syT65NapdTyHjn"
-deployed_at = 2026-09-10T19:20:49Z
+deployed_at = 2026-09-10T19:26:43Z
 deployed_hash = "6bf51ecd"
 map_hash = "e3b0c442" # pixel map on the device at deploy time
 

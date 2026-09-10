@@ -1020,3 +1020,104 @@ def pixelblaze_set_pixel_map(device: str, file_path: str) -> dict[str, Any]:
         "map_hash": pixel_map_mod.map_hash(after),
         "verified": pixel_map_mod.map_hash(after) == pixel_map_mod.map_hash(wanted),
     }
+
+
+# --- Whole-project deployment ---------------------------------------------
+
+
+def pixelblaze_deploy_project(
+    project: str,
+    device: str | None = None,
+    only_modified: bool = True,
+    capture_preview: bool | None = None,
+    deploy_map: bool = True,
+    controls: str = "auto",
+) -> dict[str, Any]:
+    """Deploy every pattern in a project to one device.
+
+    This is the "move a whole project to another controller" operation, and the
+    way to apply a changed `pattern_name_prefix` across a project in one call.
+    Patterns go one at a time: MCP calls cannot be parallelised safely, and the
+    device serialises saves anyway.
+
+    Two things to know before using it on a large project. Thumbnail capture
+    runs per pattern and costs 6-8 seconds each, so pass `capture_preview=False`
+    unless the thumbnails matter. And a Pixelblaze holds one pixel map for the
+    whole device, so if patterns here carry *different* `<stem>.mapper.js` files
+    they will overwrite each other and the last one deployed wins; only the map
+    belonging to the pattern you leave running actually matters.
+
+    Args:
+        project: The project folder name under `projects/`.
+        device: Which PixelBlaze to deploy to. Omit to use the project's most
+            recently deployed device.
+        only_modified: Skip patterns whose code already matches what this device
+            has. Patterns never deployed to this device are always included.
+            Pass False to force every pattern, which is what a prefix change or
+            a move to a fresh controller wants.
+        capture_preview: Override the project's `preview_capture` setting.
+        deploy_map: Keep the device's pixel map in step with each pattern.
+        controls: See pixelblaze_deploy_local_pattern.
+
+    Returns a per-pattern outcome and a summary.
+    """
+    proj = load_project(project)
+    resolved = resolve_device(device, project=proj)
+
+    paths = (
+        sorted(p for p in proj.patterns_dir.glob("*.js") if not p.name.endswith(".mapper.js"))
+        if proj.patterns_dir.exists()
+        else []
+    )
+
+    results: list[dict[str, Any]] = []
+    deployed = skipped = failed = 0
+    for path in paths:
+        row: dict[str, Any] = {"file": path.name}
+        try:
+            if only_modified:
+                sc = sidecar_mod.load(path)
+                entry = sc.entry_for(resolved.chip_id) if resolved.chip_id else None
+                if entry is not None:
+                    code = parse_pattern_file(path)["code"]
+                    if sidecar_mod.content_hash(code) == entry.deployed_hash:
+                        row["action"] = "skipped (unchanged)"
+                        results.append(row)
+                        skipped += 1
+                        continue
+
+            outcome = pixelblaze_deploy_local_pattern(
+                str(path),
+                device=resolved.chip_id or resolved.host,
+                capture_preview=capture_preview,
+                deploy_map=deploy_map,
+                controls=controls,
+            )
+            row.update({
+                "action": "deployed",
+                "id": outcome["id"],
+                "device_name": outcome["name"],
+                "pixel_map": outcome["pixel_map"],
+                "controls": outcome["controls"],
+            })
+            deployed += 1
+        except Exception as e:
+            # One bad pattern must not strand the rest of the project.
+            row["action"] = "failed"
+            row["error"] = str(e)
+            failed += 1
+            logger.warning("Deploying %s failed: %s", path.name, e)
+        results.append(row)
+
+    return {
+        "project": proj.name,
+        "device": resolved.label,
+        "prefix": proj.pattern_name_prefix,
+        "patterns": results,
+        "summary": {
+            "total": len(paths),
+            "deployed": deployed,
+            "skipped": skipped,
+            "failed": failed,
+        },
+    }

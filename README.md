@@ -149,6 +149,7 @@ Claude has access to these PixelBlaze tools:
 | `pixelblaze_get_pattern_code` | Read a pattern's source code |
 | `pixelblaze_list_local_patterns` | List local pattern files and their deploy status |
 | `pixelblaze_deploy_local_pattern` | Deploy a local pattern file to a device |
+| `pixelblaze_deploy_project` | Deploy every pattern in a project to one device |
 | `pixelblaze_regenerate_preview` | Rebuild a pattern's list thumbnail |
 | `pixelblaze_get_pixel_map` | Download the device's pixel map |
 | `pixelblaze_set_pixel_map` | Upload a pixel map, or clear it |

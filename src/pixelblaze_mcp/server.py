@@ -19,6 +19,7 @@ from .pixelblaze_tools import (
     pixelblaze_discover_devices,
     pixelblaze_delete_pattern,
     pixelblaze_deploy_local_pattern,
+    pixelblaze_deploy_project,
     pixelblaze_get_active_pattern,
     pixelblaze_get_controls,
     pixelblaze_get_device_info,
@@ -77,6 +78,7 @@ mcp.tool()(pixelblaze_discover_devices)
 mcp.tool()(pixelblaze_set_offline_mode)
 mcp.tool()(pixelblaze_list_local_patterns)
 mcp.tool()(pixelblaze_deploy_local_pattern)
+mcp.tool()(pixelblaze_deploy_project)
 mcp.tool()(pixelblaze_list_patterns)
 mcp.tool()(pixelblaze_get_active_pattern)
 mcp.tool()(pixelblaze_set_active_pattern)

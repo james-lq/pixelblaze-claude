@@ -1,6 +1,8 @@
 # Plan 01 — Multi-device, multi-project workflow improvements
 
-Status: Nothing here is implemented yet. Open questions are collected in section 8; decisions get folded back into the relevant section once made.
+Status: **Implemented**, phases 1-5, September 2026. The one deliberate omission is the session defaults in section 4.4, which the plan itself defers until the per-call form has been lived with. Open questions were collected in section 8; decisions are folded into the relevant sections.
+
+Where the implementation diverged from the plan, and why, is recorded in the commit messages: chip IDs are written `0x` plus upper-case hex rather than bare lower-case; a host already in the registry resolves to that entry so it still gets ID verification; `getMapFunction()` needed a timeout wrapper and `getConfigExpander()` had to be avoided entirely; and `getPatternControls()` returns a nested envelope rather than the flat dict its docstring promises.
 
 Related open items in the root `TODO.md`: *Device configuration* (both items), *Pattern naming and metadata* (both items), and the *Controls and deployment* sidecar item. This plan absorbs those; the *Code sharing* and *MCP tooling* sections stay in `TODO.md` but are referenced where they constrain the design.
 
