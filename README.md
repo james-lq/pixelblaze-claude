@@ -155,7 +155,9 @@ Claude has access to these PixelBlaze tools:
 | `pixelblaze_set_offline_mode` | Work on local files with no device present |
 | `pixelblaze_set_brightness` | Set display brightness (0-1) |
 | `pixelblaze_get_controls` | Read current slider/control values |
-| `pixelblaze_set_control` | Set a slider/control value |
+| `pixelblaze_set_control` | Set one slider/control value, merging with the rest |
+| `pixelblaze_snapshot_controls` | Record a pattern's live control values to its sidecar |
+| `pixelblaze_restore_controls` | Push recorded control values back to a device |
 | `pixelblaze_get_device_info` | Get device status and config |
 | `docs_get_api_reference` | Get the PixelBlaze language reference |
 

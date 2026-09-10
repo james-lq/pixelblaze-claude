@@ -31,6 +31,7 @@ from .config import (
 from .device import OFFLINE_MSG, connect, connect_resolved, describe, read_config
 from .preview import capture_preview as capture_preview_image
 from .preview import placeholder_preview
+from . import controls as controls_mod
 from . import pixel_map as pixel_map_mod
 from . import sidecar as sidecar_mod
 from .pattern_file import (
@@ -49,51 +50,6 @@ logger = logging.getLogger(__name__)
 def _now_utc() -> datetime:
     """Deploy timestamps are whole seconds, UTC — TOML stores them natively."""
     return datetime.now(timezone.utc).replace(microsecond=0)
-
-
-def _read_controls(pb, pattern_id: str) -> dict[str, Any]:
-    """The control values belonging to `pattern_id`, for the sidecar record.
-
-    Read back rather than pushed, so tuning done in the web UI since the last
-    deploy is captured instead of clobbered.
-
-    Which call to use depends on whether this pattern is the one running.
-    getActiveControls() returns the *running* pattern's live values, including
-    slider moves not yet saved to flash — right when we just deployed the active
-    pattern, and badly wrong otherwise, since redeploying a pattern that is not
-    running would file some other pattern's values under this one's name.
-    getPatternControls() is per-pattern but only sees what reached flash.
-    """
-    try:
-        if pb.getActivePattern() == pattern_id:
-            return dict(pb.getActiveControls() or {})
-        return _flatten_pattern_controls(pb.getPatternControls(pattern_id), pattern_id)
-    except Exception as e:  # a missing control map must never fail a deploy
-        logger.warning("Could not read control values back for %s: %s", pattern_id, e)
-        return {}
-
-
-def _flatten_pattern_controls(raw: Any, pattern_id: str) -> dict[str, Any]:
-    """Flatten what getPatternControls() actually returns.
-
-    Its docstring promises `{name: value}`, but it hands back the raw websocket
-    response, which nests the values under the pattern ID:
-    `{"controls": {"<patternId>": {name: value}}}`. Storing that shape in a
-    sidecar would bury the values a level down under a device-specific ID.
-    """
-    if not isinstance(raw, dict) or not raw:
-        return {}
-    inner = raw.get("controls")
-    if isinstance(inner, dict):
-        by_id = inner.get(pattern_id)
-        if isinstance(by_id, dict):
-            return dict(by_id)
-        # Some firmware keys it by the pattern it actually returned.
-        if len(inner) == 1:
-            only = next(iter(inner.values()))
-            return dict(only) if isinstance(only, dict) else {}
-        return {}
-    return dict(raw)
 
 
 def _record_deploy(
@@ -116,6 +72,26 @@ def _record_deploy(
         map_hash=map_hash,
     )
     sc.save()
+
+
+def _apply_controls(pb, pattern_id: str, sidecar, chip_id: str, mode: str) -> tuple[dict, str]:
+    """Seed or push control values as `mode` dictates, then read back what the
+    device ended up with. Returns (values, what happened)."""
+    if mode not in controls_mod.MODES:
+        raise ValueError(f"controls must be one of {controls_mod.MODES}; got {mode!r}")
+    if mode == controls_mod.SKIP:
+        return {}, "skipped"
+
+    to_push = controls_mod.seed_values(sidecar, chip_id, mode)
+    action = "read back"
+    if to_push:
+        try:
+            controls_mod.write_controls(pb, pattern_id, to_push, merge=True, save=True)
+            action = "pushed" if mode == controls_mod.PUSH else "seeded from history"
+        except Exception as e:
+            logger.warning("Could not push control values to %s: %s", pattern_id, e)
+            action = f"push failed: {e}"
+    return controls_mod.read_controls(pb, pattern_id), action
 
 
 def _sync_map(pb, path: Path, project: Project, deploy_map: bool) -> tuple[str | None, str | None]:
@@ -403,6 +379,7 @@ def pixelblaze_deploy_local_pattern(
     device: str | None = None,
     capture_preview: bool | None = None,
     deploy_map: bool = True,
+    controls: str = "auto",
 ) -> dict[str, str]:
     """Deploy a locally saved pattern JS file to a PixelBlaze device.
 
@@ -425,6 +402,12 @@ def pixelblaze_deploy_local_pattern(
             the device is carrying, which is what stops a stale map from another
             project bending a 1D pattern. Pass False to leave the device's map
             untouched.
+        controls: What to do about UI control values. "auto" (default) seeds
+            a device that has no recorded values for this pattern from its most
+            recent entry, so a first deploy does not read uninitialised memory,
+            and otherwise leaves the device's own values alone and reads them
+            back. "push" forces the recorded values on, for restoring after a
+            reflash or onto a replacement device. "skip" does neither.
     """
     path = resolve_path(file_path)
     if not path.exists():
@@ -453,11 +436,16 @@ def pixelblaze_deploy_local_pattern(
             activate=existing_id is None,
             capture=_wants_preview(project, capture_preview),
         )
-        controls = _read_controls(pb, pattern_id)
+        control_values, control_action = _apply_controls(
+            pb, pattern_id, info["sidecar"], resolved.chip_id, controls
+        )
         map_hash, map_action = _sync_map(pb, path, project, deploy_map)
 
     write_pattern_file(path, code, path.stem)
-    _record_deploy(path, code, pattern_id, resolved, controls, map_hash)
+    _record_deploy(
+        path, code, pattern_id, resolved,
+        control_values if controls != "skip" else None, map_hash,
+    )
     return {
         "id": pattern_id,
         "name": name,
@@ -465,6 +453,7 @@ def pixelblaze_deploy_local_pattern(
         "project": project.name,
         "device": resolved.label,
         "pixel_map": map_action,
+        "controls": control_action,
     }
 
 
@@ -554,6 +543,7 @@ def pixelblaze_create_pattern(
     device: str | None = None,
     capture_preview: bool | None = None,
     deploy_map: bool = True,
+    controls: str = "auto",
 ) -> dict[str, str]:
     """Create a new pattern on a PixelBlaze and activate it, saving a local copy
     in the project's patterns folder.
@@ -575,6 +565,12 @@ def pixelblaze_create_pattern(
         deploy_map: Bring the device's pixel map in line with this pattern. A
             project declaring no map clears whatever the device carries; pass
             False to leave it alone.
+        controls: What to do about UI control values. "auto" (default) seeds
+            a device that has no recorded values for this pattern from its most
+            recent entry, so a first deploy does not read uninitialised memory,
+            and otherwise leaves the device's own values alone and reads them
+            back. "push" forces the recorded values on, for restoring after a
+            reflash or onto a replacement device. "skip" does neither.
 
     Returns a dict with the new pattern's 'id', local 'name' and device name.
     """
@@ -610,12 +606,17 @@ def pixelblaze_create_pattern(
             activate=True,
             capture=_wants_preview(proj, capture_preview),
         )
-        controls = _read_controls(pb, pattern_id)
         path = new_pattern_file_path(stem, proj)
+        control_values, control_action = _apply_controls(
+            pb, pattern_id, sidecar_mod.load(path), resolved.chip_id, controls
+        )
         map_hash, map_action = _sync_map(pb, path, proj, deploy_map)
 
     write_pattern_file(path, code, stem)
-    _record_deploy(path, code, pattern_id, resolved, controls, map_hash)
+    _record_deploy(
+        path, code, pattern_id, resolved,
+        control_values if controls != "skip" else None, map_hash,
+    )
     return {
         "id": pattern_id,
         "name": stem,
@@ -624,6 +625,7 @@ def pixelblaze_create_pattern(
         "file": path.name,
         "device": resolved.label,
         "pixel_map": map_action,
+        "controls": control_action,
     }
 
 
@@ -678,7 +680,7 @@ def pixelblaze_update_pattern(
             pattern_id=pattern_id,
             capture=_wants_preview(project, capture_preview),
         )
-        controls = _read_controls(pb, pattern_id)
+        control_values = controls_mod.read_controls(pb, pattern_id)
 
     if local_path is None:
         # An unknown pattern needs a project to land in; without one, the device
@@ -689,7 +691,7 @@ def pixelblaze_update_pattern(
             "`project` to keep a local copy."
         )
     write_pattern_file(local_path, code, local_path.stem)
-    _record_deploy(local_path, code, pattern_id, resolved, controls)
+    _record_deploy(local_path, code, pattern_id, resolved, control_values)
     return (
         f"Updated pattern '{name}' ({pattern_id}) on {resolved.label} — "
         f"wrote {local_path.name} and its sidecar"
@@ -734,17 +736,25 @@ def pixelblaze_get_controls(device: str) -> list[dict[str, Any]]:
 
 
 def pixelblaze_set_control(
-    name: str, value: float | bool | list[float], device: str
-) -> str:
-    """Set the value of a UI control on the active pattern.
+    name: str, value: float | bool | list[float], device: str, save: bool = True
+) -> dict[str, Any]:
+    """Set one UI control on the active pattern, leaving the others alone.
+
+    The device's own API replaces the whole control map rather than merging into
+    it, so setting one control there resets every other control on that pattern
+    to uninitialised memory. This reads the current values, layers the new one
+    over them, and writes the whole map back, so setting one control means only
+    that. It also updates the pattern's sidecar entry, when there is one, so the
+    committed record tracks what was actually set.
 
     Args:
         name: The control variable name (as it appears in pixelblaze_get_controls).
         value: A number for a slider (0.0-1.0), a boolean for a toggle, or a list
             of three floats for a colour picker — matching what the device stores.
         device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
+        save: Persist to flash so the value survives a reboot. Defaults to True.
 
-    Returns a confirmation message.
+    Returns the resulting control map and whether a sidecar was updated.
     """
     if isinstance(value, list) and len(value) != 3:
         raise ValueError(
@@ -752,9 +762,123 @@ def pixelblaze_set_control(
             f"h, s, v); got {len(value)}."
         )
     with connect(device) as pb:
-        # The client exposes setActiveControls(dict); there is no setControl().
-        pb.setActiveControls({name: value})
-        return f"Set control '{name}' to {value}"
+        pattern_id = pb.getActivePattern()
+        if not pattern_id:
+            raise RuntimeError("No pattern is running, so there are no controls to set.")
+        merged = controls_mod.write_controls(
+            pb, pattern_id, {name: value}, merge=True, save=save
+        )
+
+    hit = sidecar_mod.find_by_pattern_id(pattern_id)
+    updated = None
+    if hit:
+        js_path, _ = hit
+        sc = sidecar_mod.load(js_path)
+        entry = next((e for e in sc.entries if e.pattern_id == pattern_id), None)
+        if entry is not None:
+            entry.controls = merged
+            sc.save()
+            updated = sc.path.name
+
+    return {
+        "pattern_id": pattern_id,
+        "set": {name: value},
+        "controls": merged,
+        "sidecar_updated": updated,
+    }
+
+
+def pixelblaze_snapshot_controls(file_path: str, device: str | None = None) -> dict[str, Any]:
+    """Record a pattern's live control values into its sidecar, without deploying.
+
+    Use this after tuning sliders in the web UI, to get that tuning under version
+    control. A deploy does the same read-back; this is the same thing on demand.
+
+    Args:
+        file_path: The pattern JS file. Relative paths resolve from the workspace
+            root.
+        device: Which PixelBlaze to read from. Omit to use the device this
+            pattern last went to.
+
+    Returns the values recorded and what they replaced.
+    """
+    path = resolve_path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Pattern file not found: {file_path}")
+    sc = sidecar_mod.load(path)
+    resolved = resolve_device(device, project=project_for_path(path), pattern_path=path)
+    entry = sc.entry_for(resolved.chip_id) if resolved.chip_id else None
+    if entry is None:
+        raise ValueError(
+            f"{path.name} has no deployment record for {resolved.label}, so there is "
+            "nothing to snapshot against. Deploy it there first."
+        )
+
+    with connect_resolved(resolved) as pb:
+        live = controls_mod.read_controls(pb, entry.pattern_id)
+
+    was, entry.controls = dict(entry.controls), live
+    sc.save()
+    return {
+        "file": path.name,
+        "device": resolved.label,
+        "pattern_id": entry.pattern_id,
+        "controls": live,
+        "previous": was,
+        "changed": was != live,
+    }
+
+
+def pixelblaze_restore_controls(file_path: str, device: str | None = None) -> dict[str, Any]:
+    """Push a pattern's recorded control values from its sidecar onto the device.
+
+    The reverse of snapshot: for restoring tuning after a reflash, or onto a
+    replacement device. Values recorded for the target device are used if it has
+    any, otherwise the most recently recorded set.
+
+    Args:
+        file_path: The pattern JS file. Relative paths resolve from the workspace
+            root.
+        device: Which PixelBlaze to push to. Omit to use the device this pattern
+            last went to.
+
+    Returns what was pushed and what the device holds now.
+    """
+    path = resolve_path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Pattern file not found: {file_path}")
+    sc = sidecar_mod.load(path)
+    resolved = resolve_device(device, project=project_for_path(path), pattern_path=path)
+    entry = sc.entry_for(resolved.chip_id) if resolved.chip_id else None
+    if entry is None:
+        raise ValueError(
+            f"{path.name} has no deployment record for {resolved.label}. Deploy it "
+            "there first; a deploy seeds a new device's controls automatically."
+        )
+
+    wanted = controls_mod.seed_values(sc, resolved.chip_id, controls_mod.PUSH)
+    if not wanted:
+        return {
+            "file": path.name,
+            "device": resolved.label,
+            "action": "nothing recorded to restore",
+            "controls": {},
+        }
+
+    with connect_resolved(resolved) as pb:
+        controls_mod.write_controls(pb, entry.pattern_id, wanted, merge=True, save=True)
+        now = controls_mod.read_controls(pb, entry.pattern_id)
+
+    entry.controls = now
+    sc.save()
+    return {
+        "file": path.name,
+        "device": resolved.label,
+        "pattern_id": entry.pattern_id,
+        "action": "restored",
+        "pushed": wanted,
+        "controls": now,
+    }
 
 
 def pixelblaze_regenerate_preview(pattern_id: str, device: str) -> str:

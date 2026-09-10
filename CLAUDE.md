@@ -169,6 +169,20 @@ The map is only written when it differs from what the device reports, so a redep
 
 `pixelblaze_get_pixel_map(device, file_path=None)` downloads; `pixelblaze_set_pixel_map(device, file_path)` uploads. Setting a map **compiles** it: the JavaScript is run against the device's pixel count to produce coordinates, which become the binary map data the renderer actually uses. An empty or whitespace-only file clears the map instead of being compiled.
 
+### Control Values
+
+A pattern's slider, toggle and colour-picker values live on the device, in a store separate from the pattern code — so saving code never disturbs them. The sidecar keeps a copy per device, and a deploy keeps the two in step:
+
+- **First deploy to a device with no record for this pattern:** the most recently recorded values are pushed, so the pattern starts at known-good settings instead of reading uninitialised memory. Without this, a fresh pattern's controls read back as garbage (`1e34`, `3.7e-40`) and the UI shows nonsense until they are set by hand.
+- **Redeploy to a device that already has values:** the device's own values are left alone and read back into the sidecar, so tuning done in the web UI is captured rather than clobbered.
+- `controls="push"` forces the recorded values on regardless, for restoring after a reflash or onto a replacement device. `controls="skip"` does neither.
+
+`pixelblaze_snapshot_controls(file_path)` records live values on demand, without a deploy — use it after tuning sliders in the web UI. `pixelblaze_restore_controls(file_path)` pushes the recorded values back.
+
+**Setting one control only sets one control.** The device's own API replaces the whole control map rather than merging into it, so writing a single value there resets every other control on that pattern. `pixelblaze_set_control` reads, merges, and writes the whole map back, and updates the pattern's sidecar entry. Never call `setActiveControls` directly with a partial map.
+
+**Values keep their types.** Sliders are floats, toggles are booleans, colour pickers are three-float arrays. Nothing coerces between them.
+
 ### 2D Patterns: Never Export Both `render` and `render2D`
 
 If a pattern exports both `render(index)` and `render2D(index, x, y)`, PixelBlaze will use the 1D renderer **even when a pixel map is configured**. For 2D mapped patterns, only define `render2D` — omit or comment out `render` entirely.

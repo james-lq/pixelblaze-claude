@@ -31,7 +31,9 @@ from .pixelblaze_tools import (
     pixelblaze_set_active_pattern,
     pixelblaze_set_brightness,
     pixelblaze_set_control,
+    pixelblaze_restore_controls,
     pixelblaze_set_pixel_map,
+    pixelblaze_snapshot_controls,
     pixelblaze_set_offline_mode,
     pixelblaze_update_pattern,
 )
@@ -89,6 +91,8 @@ mcp.tool()(pixelblaze_set_brightness)
 mcp.tool()(pixelblaze_regenerate_preview)
 mcp.tool()(pixelblaze_get_pixel_map)
 mcp.tool()(pixelblaze_set_pixel_map)
+mcp.tool()(pixelblaze_snapshot_controls)
+mcp.tool()(pixelblaze_restore_controls)
 
 # --- Documentation tools ---
 
