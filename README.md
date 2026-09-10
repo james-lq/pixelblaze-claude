@@ -150,6 +150,8 @@ Claude has access to these PixelBlaze tools:
 | `pixelblaze_list_local_patterns` | List local pattern files and their deploy status |
 | `pixelblaze_deploy_local_pattern` | Deploy a local pattern file to a device |
 | `pixelblaze_regenerate_preview` | Rebuild a pattern's list thumbnail |
+| `pixelblaze_get_pixel_map` | Download the device's pixel map |
+| `pixelblaze_set_pixel_map` | Upload a pixel map, or clear it |
 | `pixelblaze_set_offline_mode` | Work on local files with no device present |
 | `pixelblaze_set_brightness` | Set display brightness (0-1) |
 | `pixelblaze_get_controls` | Read current slider/control values |

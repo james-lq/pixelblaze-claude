@@ -155,6 +155,20 @@ sliderCycleSeconds = 0.42
 - A `.js` with no sidecar is simply "never deployed".
 - If a pattern has since been deleted from a device, its entry stays; the next deploy notices the ID is gone and creates it afresh.
 
+### Pixel Maps
+
+A Pixelblaze holds **one map for the whole device**, not one per pattern. Which map a pattern wants is resolved in this order:
+
+1. `patterns/<stem>.mapper.js` — beside the pattern, wins if present
+2. `pixel_map` in the project's `project.toml` — the project default
+3. neither — the project is 1D and wants **no map at all**
+
+The third case is an instruction, not an absence of one. A project declaring no map **clears** whatever map the device is carrying, which is what stops a leftover map from another project quietly bending a 1D pattern's coordinates. Pass `deploy_map=False` to any deploy to leave the device's map alone, and use `pixelblaze_get_pixel_map` first if the map on the device is worth keeping.
+
+The map is only written when it differs from what the device reports, so a redeploy of an unchanged pattern costs one read. The hash of the map in force is recorded as `map_hash` in the sidecar entry, so it is possible to tell that a pattern was deployed against a different map than the one now declared.
+
+`pixelblaze_get_pixel_map(device, file_path=None)` downloads; `pixelblaze_set_pixel_map(device, file_path)` uploads. Setting a map **compiles** it: the JavaScript is run against the device's pixel count to produce coordinates, which become the binary map data the renderer actually uses. An empty or whitespace-only file clears the map instead of being compiled.
+
 ### 2D Patterns: Never Export Both `render` and `render2D`
 
 If a pattern exports both `render(index)` and `render2D(index, x, y)`, PixelBlaze will use the 1D renderer **even when a pixel map is configured**. For 2D mapped patterns, only define `render2D` — omit or comment out `render` entirely.

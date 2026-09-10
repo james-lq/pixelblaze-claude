@@ -31,6 +31,7 @@ from .config import (
 from .device import OFFLINE_MSG, connect, connect_resolved, describe, read_config
 from .preview import capture_preview as capture_preview_image
 from .preview import placeholder_preview
+from . import pixel_map as pixel_map_mod
 from . import sidecar as sidecar_mod
 from .pattern_file import (
     canonical_pattern_name,
@@ -50,21 +51,58 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
 
-def _read_controls(pb) -> dict[str, Any]:
-    """The live control values for the running pattern, for the sidecar record.
+def _read_controls(pb, pattern_id: str) -> dict[str, Any]:
+    """The control values belonging to `pattern_id`, for the sidecar record.
 
     Read back rather than pushed, so tuning done in the web UI since the last
     deploy is captured instead of clobbered.
+
+    Which call to use depends on whether this pattern is the one running.
+    getActiveControls() returns the *running* pattern's live values, including
+    slider moves not yet saved to flash — right when we just deployed the active
+    pattern, and badly wrong otherwise, since redeploying a pattern that is not
+    running would file some other pattern's values under this one's name.
+    getPatternControls() is per-pattern but only sees what reached flash.
     """
     try:
-        return dict(pb.getActiveControls() or {})
+        if pb.getActivePattern() == pattern_id:
+            return dict(pb.getActiveControls() or {})
+        return _flatten_pattern_controls(pb.getPatternControls(pattern_id), pattern_id)
     except Exception as e:  # a missing control map must never fail a deploy
-        logger.warning("Could not read control values back: %s", e)
+        logger.warning("Could not read control values back for %s: %s", pattern_id, e)
         return {}
 
 
+def _flatten_pattern_controls(raw: Any, pattern_id: str) -> dict[str, Any]:
+    """Flatten what getPatternControls() actually returns.
+
+    Its docstring promises `{name: value}`, but it hands back the raw websocket
+    response, which nests the values under the pattern ID:
+    `{"controls": {"<patternId>": {name: value}}}`. Storing that shape in a
+    sidecar would bury the values a level down under a device-specific ID.
+    """
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    inner = raw.get("controls")
+    if isinstance(inner, dict):
+        by_id = inner.get(pattern_id)
+        if isinstance(by_id, dict):
+            return dict(by_id)
+        # Some firmware keys it by the pattern it actually returned.
+        if len(inner) == 1:
+            only = next(iter(inner.values()))
+            return dict(only) if isinstance(only, dict) else {}
+        return {}
+    return dict(raw)
+
+
 def _record_deploy(
-    path: Path, code: str, pattern_id: str, device, controls: dict[str, Any] | None = None
+    path: Path,
+    code: str,
+    pattern_id: str,
+    device,
+    controls: dict[str, Any] | None = None,
+    map_hash: str | None = None,
 ) -> None:
     """Write the pattern file and its sidecar entry for a completed deploy."""
     sc = sidecar_mod.load(path)
@@ -75,8 +113,27 @@ def _record_deploy(
         deployed_hash=sidecar_mod.content_hash(code),
         deployed_at=_now_utc(),
         controls=controls,
+        map_hash=map_hash,
     )
     sc.save()
+
+
+def _sync_map(pb, path: Path, project: Project, deploy_map: bool) -> tuple[str | None, str | None]:
+    """Bring the device's map in line with the pattern, unless told not to.
+
+    Returns (map_hash, what happened) for the sidecar and the tool result. A
+    failure here is reported but does not fail the deploy: the pattern is
+    already on the device by this point, and losing the code over a map problem
+    would be the worse outcome.
+    """
+    if not deploy_map:
+        return None, "skipped (deploy_map=False)"
+    try:
+        outcome = pixel_map_mod.sync_map(pb, path, project)
+        return outcome["map_hash"], outcome["action"]
+    except Exception as e:
+        logger.warning("Pixel map sync failed for %s: %s", path.name, e)
+        return None, f"failed: {e}"
 
 
 def _wants_preview(project: Project | None, override: bool | None) -> bool:
@@ -342,7 +399,10 @@ def pixelblaze_list_local_patterns(project: str | None = None) -> dict[str, Any]
 
 
 def pixelblaze_deploy_local_pattern(
-    file_path: str, device: str | None = None, capture_preview: bool | None = None
+    file_path: str,
+    device: str | None = None,
+    capture_preview: bool | None = None,
+    deploy_map: bool = True,
 ) -> dict[str, str]:
     """Deploy a locally saved pattern JS file to a PixelBlaze device.
 
@@ -359,6 +419,12 @@ def pixelblaze_deploy_local_pattern(
             creates it there afresh.
         capture_preview: Override the project's `preview_capture` setting for
             this call. False skips the ~6 s live thumbnail capture.
+        deploy_map: Bring the device's pixel map in line with this pattern —
+            its `<stem>.mapper.js` if it has one, else the project's `pixel_map`,
+            else no map at all. A project that declares no map CLEARS whatever
+            the device is carrying, which is what stops a stale map from another
+            project bending a 1D pattern. Pass False to leave the device's map
+            untouched.
     """
     path = resolve_path(file_path)
     if not path.exists():
@@ -387,16 +453,18 @@ def pixelblaze_deploy_local_pattern(
             activate=existing_id is None,
             capture=_wants_preview(project, capture_preview),
         )
-        controls = _read_controls(pb)
+        controls = _read_controls(pb, pattern_id)
+        map_hash, map_action = _sync_map(pb, path, project, deploy_map)
 
     write_pattern_file(path, code, path.stem)
-    _record_deploy(path, code, pattern_id, resolved, controls)
+    _record_deploy(path, code, pattern_id, resolved, controls, map_hash)
     return {
         "id": pattern_id,
         "name": name,
         "file": path.name,
         "project": project.name,
         "device": resolved.label,
+        "pixel_map": map_action,
     }
 
 
@@ -485,6 +553,7 @@ def pixelblaze_create_pattern(
     project: str,
     device: str | None = None,
     capture_preview: bool | None = None,
+    deploy_map: bool = True,
 ) -> dict[str, str]:
     """Create a new pattern on a PixelBlaze and activate it, saving a local copy
     in the project's patterns folder.
@@ -503,6 +572,9 @@ def pixelblaze_create_pattern(
             recently deployed device.
         capture_preview: Override the project's `preview_capture` setting for
             this call. False skips the ~6 s live thumbnail capture.
+        deploy_map: Bring the device's pixel map in line with this pattern. A
+            project declaring no map clears whatever the device carries; pass
+            False to leave it alone.
 
     Returns a dict with the new pattern's 'id', local 'name' and device name.
     """
@@ -538,11 +610,12 @@ def pixelblaze_create_pattern(
             activate=True,
             capture=_wants_preview(proj, capture_preview),
         )
-        controls = _read_controls(pb)
+        controls = _read_controls(pb, pattern_id)
+        path = new_pattern_file_path(stem, proj)
+        map_hash, map_action = _sync_map(pb, path, proj, deploy_map)
 
-    path = new_pattern_file_path(stem, proj)
     write_pattern_file(path, code, stem)
-    _record_deploy(path, code, pattern_id, resolved, controls)
+    _record_deploy(path, code, pattern_id, resolved, controls, map_hash)
     return {
         "id": pattern_id,
         "name": stem,
@@ -550,6 +623,7 @@ def pixelblaze_create_pattern(
         "project": proj.name,
         "file": path.name,
         "device": resolved.label,
+        "pixel_map": map_action,
     }
 
 
@@ -604,7 +678,7 @@ def pixelblaze_update_pattern(
             pattern_id=pattern_id,
             capture=_wants_preview(project, capture_preview),
         )
-        controls = _read_controls(pb)
+        controls = _read_controls(pb, pattern_id)
 
     if local_path is None:
         # An unknown pattern needs a project to land in; without one, the device
@@ -743,3 +817,82 @@ def pixelblaze_set_brightness(value: float, device: str) -> str:
     with connect(device) as pb:
         pb.setBrightnessSlider(value)
         return f"Set brightness to {value:.2f}"
+
+
+# --- Pixel maps -----------------------------------------------------------
+
+
+def pixelblaze_get_pixel_map(device: str, file_path: str | None = None) -> dict[str, Any]:
+    """Read the pixel map currently on a PixelBlaze, optionally saving it locally.
+
+    A Pixelblaze holds one map for the whole device, not one per pattern. Use
+    this to keep a copy before a deploy replaces or clears it.
+
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
+        file_path: Where to write the map source. Relative paths resolve from
+            the workspace root. Omit to return the text without saving.
+
+    Returns the map source, its hash, and where it was saved.
+    """
+    with connect(device) as pb:
+        text = pixel_map_mod.read_map(pb)
+
+    result: dict[str, Any] = {
+        "device": device,
+        "empty": pixel_map_mod.is_empty(text),
+        "chars": len(text),
+        "map_hash": pixel_map_mod.map_hash(text),
+        "map": text,
+    }
+    if file_path:
+        path = resolve_path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        result["saved_to"] = str(path)
+    return result
+
+
+def pixelblaze_set_pixel_map(device: str, file_path: str) -> dict[str, Any]:
+    """Push a pixel map from a local file onto a PixelBlaze.
+
+    Setting a map compiles it: the JavaScript is run against the device's pixel
+    count to produce coordinates, which become the binary map data the renderer
+    uses for render2D/render3D. An empty or whitespace-only file clears the
+    device's map instead.
+
+    Normally the map follows the pattern automatically on deploy; use this for
+    the cases that do not, such as restoring a map you saved earlier.
+
+    Args:
+        device: Which PixelBlaze: a chip ID, a registered display name, or an IP.
+        file_path: The map source file. Relative paths resolve from the
+            workspace root.
+
+    Returns what was on the device before and what is there now.
+    """
+    path = resolve_path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Pixel map file not found: {file_path}")
+    wanted = path.read_text(encoding="utf-8")
+
+    with connect(device) as pb:
+        before = pixel_map_mod.read_map(pb)
+        if pixel_map_mod.map_hash(before) == pixel_map_mod.map_hash(wanted):
+            return {
+                "device": device,
+                "file": str(path),
+                "action": "unchanged",
+                "map_hash": pixel_map_mod.map_hash(wanted),
+            }
+        pixel_map_mod.write_map(pb, wanted)
+        after = pixel_map_mod.read_map(pb)
+
+    return {
+        "device": device,
+        "file": str(path),
+        "action": "cleared" if pixel_map_mod.is_empty(wanted) else "pushed",
+        "previous_hash": pixel_map_mod.map_hash(before),
+        "map_hash": pixel_map_mod.map_hash(after),
+        "verified": pixel_map_mod.map_hash(after) == pixel_map_mod.map_hash(wanted),
+    }
