@@ -9,6 +9,8 @@
 
 ## MCP tooling
 
+- Warn before a deploy destroys pixel map source that exists nowhere else. A deploy brings the device's map in line with the pattern being deployed, and a project declaring no map clears it outright — which is the intended fix for stale maps, but means a map hand-written in the web UI and never saved to the repo is gone with no copy. Before overwriting or clearing, hash what is on the device and compare it against every map source in the workspace (each project's `pixel_map` and every `<stem>.mapper.js`); if it matches none of them, say so loudly, and consider requiring an explicit opt-in rather than just warning. The sidecars' `map_hash` fields are a partial index of maps that have been deployed from here, but they do not cover a map that only ever existed on the device. `pixelblaze_get_pixel_map(device, file_path=...)` is the manual escape hatch today, which relies on remembering to use it first.
+
 - Consider an in-memory `pixelblaze_use(project=..., device=...)` setting process-lifetime defaults, if passing `device=` per call turns out to be noisy in practice. Deferred deliberately when the multi-device work landed: being memory-only it cannot recreate the restart problem that work removed, but it should not be added until the per-call form has been lived with.
 
 - Add a bulk download tool (e.g. `pixelblaze_download_patterns`) accepting a list of IDs or a name filter regex and saving all matches in one call. Downloading 25 patterns one at a time was slow enough that it had to be abandoned in favour of a direct Python script using `pixelblaze-client`, and MCP calls cannot be safely parallelised, so the batching has to happen inside the tool.
