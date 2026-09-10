@@ -9,6 +9,8 @@
 
 ## MCP tooling
 
+- Consider an in-memory `pixelblaze_use(project=..., device=...)` setting process-lifetime defaults, if passing `device=` per call turns out to be noisy in practice. Deferred deliberately when the multi-device work landed: being memory-only it cannot recreate the restart problem that work removed, but it should not be added until the per-call form has been lived with.
+
 - Add a bulk download tool (e.g. `pixelblaze_download_patterns`) accepting a list of IDs or a name filter regex and saving all matches in one call. Downloading 25 patterns one at a time was slow enough that it had to be abandoned in favour of a direct Python script using `pixelblaze-client`, and MCP calls cannot be safely parallelised, so the batching has to happen inside the tool.
 
 - Decide whether `getPatternSourceCode` or `getPatternAsEpe` is the right underlying API call for downloads.

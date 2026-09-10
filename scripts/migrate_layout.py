@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Migrate pattern files from the in-file metadata block to `.sidecar.toml`.
 
-Phase 2 of plan 01. For each pattern file in a project:
+A one-off from the move to per-pattern sidecars. For each pattern file in a project:
 
   * with `--device <id>`, the file's recorded Pattern ID and `@deployed` /
     `@deployed-hash` become a single `deployment_history` entry naming that
